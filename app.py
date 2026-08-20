@@ -255,40 +255,78 @@ def prepare_our_prices(our_df):
 
 
 
-def prepare_supplier_price_map(supplier_df, config):
+def _build_identifier_price_map(supplier, id_column, normalizer):
     """
-    Return a dictionary of normalized identifier -> lowest supplier price.
-    Also return how many duplicated identifiers were found.
+    Build normalized identifier -> lowest valid supplier price.
+
+    `supplier` must already contain the parsed `_price` column.
     """
-    supplier = supplier_df.copy()
-
-    normalizer = normalize_ean if config["match_method"] == "EAN" else normalize_sku
-
-    supplier["_key"] = supplier[config["id_column"]].map(normalizer)
-    supplier["_price"] = supplier[config["price_column"]].map(parse_number)
-
-    supplier = supplier.dropna(subset=["_key", "_price"]).copy()
+    temp = supplier[[id_column, "_price"]].copy()
+    temp["_key"] = temp[id_column].map(normalizer)
+    temp = temp.dropna(subset=["_key", "_price"]).copy()
 
     duplicate_count = int(
-        supplier.loc[
-            supplier["_key"].duplicated(keep=False),
+        temp.loc[
+            temp["_key"].duplicated(keep=False),
             "_key",
         ].nunique()
     )
 
-    # If a supplier has the same SKU/EAN more than once, use the cheapest price.
-    best = supplier.groupby("_key", as_index=True)["_price"].min()
+    # If the same identifier appears more than once, use the cheapest valid price.
+    best = temp.groupby("_key", as_index=True)["_price"].min()
 
     return best.to_dict(), duplicate_count
 
+
+def prepare_supplier_price_maps(supplier_df, config):
+    """
+    Prepare one or two supplier lookup maps.
+
+    Supported match methods:
+      - SKU
+      - EAN
+      - EAN + SKU
+
+    For EAN + SKU the comparison always tries EAN first and only falls back
+    to SKU when the EAN lookup does not find a supplier price.
+    """
+    supplier = supplier_df.copy()
+    supplier["_price"] = supplier[config["price_column"]].map(parse_number)
+
+    match_method = config["match_method"]
+    price_maps = {}
+    duplicate_count = 0
+
+    if match_method in ("EAN", "EAN + SKU"):
+        ean_map, ean_duplicates = _build_identifier_price_map(
+            supplier,
+            config["ean_column"],
+            normalize_ean,
+        )
+        price_maps["EAN"] = ean_map
+        duplicate_count += ean_duplicates
+
+    if match_method in ("SKU", "EAN + SKU"):
+        sku_map, sku_duplicates = _build_identifier_price_map(
+            supplier,
+            config["sku_column"],
+            normalize_sku,
+        )
+        price_maps["SKU"] = sku_map
+        duplicate_count += sku_duplicates
+
+    return price_maps, duplicate_count
 
 
 def compare_all_suppliers(our_df, supplier_configs):
     """
     Compare every OurPrices row against all uploaded suppliers.
 
-    Every supplier can independently use SKU or EAN matching and can use
-    differently named identifier/price columns.
+    Every supplier can independently use SKU, EAN, or EAN + SKU matching and
+    can use differently named identifier/price columns.
+
+    When EAN + SKU is selected, EAN has priority. SKU is used only if the EAN
+    lookup fails for that product.
     """
     result = prepare_our_prices(our_df)
 
@@ -312,21 +350,33 @@ def compare_all_suppliers(our_df, supplier_configs):
     supplier_price_columns = []
     duplicate_info = {}
 
+    normalized_our_ean = result["EAN"].map(normalize_ean)
+    normalized_our_sku = result["SKU"].map(normalize_sku)
+
     for config in supplier_configs:
         supplier_name = config["supplier_name"]
         price_col = f"{supplier_name} Price"
 
-        price_map, duplicate_count = prepare_supplier_price_map(
+        price_maps, duplicate_count = prepare_supplier_price_maps(
             config["dataframe"],
             config,
         )
 
-        if config["match_method"] == "EAN":
-            our_keys = result["EAN"].map(normalize_ean)
-        else:
-            our_keys = result["SKU"].map(normalize_sku)
+        match_method = config["match_method"]
 
-        result[price_col] = our_keys.map(price_map)
+        if match_method == "EAN":
+            result[price_col] = normalized_our_ean.map(price_maps["EAN"])
+
+        elif match_method == "SKU":
+            result[price_col] = normalized_our_sku.map(price_maps["SKU"])
+
+        else:
+            # EAN + SKU:
+            # 1) try EAN
+            # 2) only if no EAN match, try SKU
+            ean_prices = normalized_our_ean.map(price_maps["EAN"])
+            sku_prices = normalized_our_sku.map(price_maps["SKU"])
+            result[price_col] = ean_prices.combine_first(sku_prices)
 
         supplier_price_columns.append(price_col)
         duplicate_info[supplier_name] = duplicate_count
@@ -443,6 +493,92 @@ def compare_all_suppliers(our_df, supplier_configs):
     return result, supplier_price_columns, duplicate_info
 
 
+def parse_requested_codes(text):
+    """Parse pasted EAN/SKU values while preserving the user's order."""
+    if not text:
+        return []
+
+    # Primarily line-based, but commas/semicolons are also accepted.
+    parts = re.split(r"[\r\n,;]+", text)
+    return [part.strip() for part in parts if part.strip()]
+
+
+def filter_result_by_codes(full_result, requested_codes):
+    """
+    Return exactly one row per requested code, in the same order as pasted.
+
+    The lookup accepts an EAN, an SKU, or a mix. EAN is checked first and SKU
+    second. The lookup uses the full comparison result, so a manually requested
+    product can be shown even if it is normally hidden by the browser's
+    Realisation/Available filter.
+
+    If a code is not found, a placeholder row is retained with CODE NOT FOUND.
+    """
+    if not requested_codes:
+        return pd.DataFrame()
+
+    ean_lookup = {}
+    sku_lookup = {}
+
+    for idx, row in full_result.iterrows():
+        ean_key = normalize_ean(row.get("EAN"))
+        sku_key = normalize_sku(row.get("SKU"))
+
+        # Keep the first OurPrices row for a duplicated identifier so that one
+        # pasted code always produces one result row.
+        if ean_key and ean_key not in ean_lookup:
+            ean_lookup[ean_key] = idx
+
+        if sku_key and sku_key not in sku_lookup:
+            sku_lookup[sku_key] = idx
+
+    rows = []
+
+    text_columns = {
+        "EAN",
+        "SKU",
+        "Cheapest Supplier",
+        "Status",
+    }
+
+    for requested_code in requested_codes:
+        ean_key = normalize_ean(requested_code)
+        sku_key = normalize_sku(requested_code)
+
+        matched_index = None
+        lookup_status = ""
+
+        if ean_key and ean_key in ean_lookup:
+            matched_index = ean_lookup[ean_key]
+            lookup_status = "MATCHED BY EAN"
+        elif sku_key and sku_key in sku_lookup:
+            matched_index = sku_lookup[sku_key]
+            lookup_status = "MATCHED BY SKU"
+
+        if matched_index is not None:
+            row_dict = full_result.loc[matched_index].to_dict()
+        else:
+            row_dict = {}
+            for col in full_result.columns:
+                row_dict[col] = "" if col in text_columns else np.nan
+
+            row_dict["_relevant_for_display"] = False
+            lookup_status = "CODE NOT FOUND"
+
+        row_dict["Requested Code"] = requested_code
+        row_dict["Lookup Status"] = lookup_status
+        rows.append(row_dict)
+
+    filtered = pd.DataFrame(rows)
+
+    first_columns = ["Requested Code", "Lookup Status"]
+    remaining_columns = [
+        col for col in full_result.columns
+        if col not in first_columns
+    ]
+
+    return filtered[first_columns + remaining_columns]
+
 
 def create_excel(
     full_result,
@@ -477,13 +613,32 @@ def create_excel(
         supplier_name = config["supplier_name"]
         price_col = f"{supplier_name} Price"
 
-        summary_rows.extend(
+        supplier_summary_rows = [
+            ("", ""),
+            (f"{supplier_name} - source file", config["file_name"]),
+            (f"{supplier_name} - sheet", config["sheet_name"]),
+            (f"{supplier_name} - match method", config["match_method"]),
+        ]
+
+        if config["match_method"] == "EAN + SKU":
+            supplier_summary_rows.extend(
+                [
+                    (f"{supplier_name} - EAN column", config["ean_column"]),
+                    (f"{supplier_name} - SKU column", config["sku_column"]),
+                    (f"{supplier_name} - priority", "EAN first, then SKU fallback"),
+                ]
+            )
+        elif config["match_method"] == "EAN":
+            supplier_summary_rows.append(
+                (f"{supplier_name} - EAN column", config["ean_column"])
+            )
+        else:
+            supplier_summary_rows.append(
+                (f"{supplier_name} - SKU column", config["sku_column"])
+            )
+
+        supplier_summary_rows.extend(
             [
-                ("", ""),
-                (f"{supplier_name} - source file", config["file_name"]),
-                (f"{supplier_name} - sheet", config["sheet_name"]),
-                (f"{supplier_name} - match method", config["match_method"]),
-                (f"{supplier_name} - identifier column", config["id_column"]),
                 (f"{supplier_name} - price column", config["price_column"]),
                 (f"{supplier_name} - matched products", int(full_result[price_col].notna().sum())),
                 (
@@ -502,6 +657,8 @@ def create_excel(
                 ),
             ]
         )
+
+        summary_rows.extend(supplier_summary_rows)
 
     summary_df = pd.DataFrame(summary_rows, columns=["Metric", "Value"])
 
@@ -730,6 +887,10 @@ def style_browser_table(df, supplier_price_columns):
     def style_row(row):
         styles = pd.Series("", index=row.index, dtype=object)
 
+        if row.get("Lookup Status", "") == "CODE NOT FOUND":
+            styles[:] = "background-color: #f8d7da; color: #842029;"
+            return styles
+
         our_price = row.get("Our Price", np.nan)
         cheapest_price = row.get("Cheapest Alternative Price", np.nan)
         cheapest_supplier = row.get("Cheapest Supplier", "")
@@ -800,6 +961,12 @@ if "comparison_duplicate_info" not in st.session_state:
 if "comparison_our_file_name" not in st.session_state:
     st.session_state.comparison_our_file_name = ""
 
+if "comparison_code_filter_active" not in st.session_state:
+    st.session_state.comparison_code_filter_active = False
+
+if "comparison_code_filter_codes" not in st.session_state:
+    st.session_state.comparison_code_filter_codes = []
+
 
 # =========================================================
 # WEB INTERFACE
@@ -809,8 +976,8 @@ st.title("Price List Comparison")
 
 st.write(
     "Compare your fixed **OurPrices** workbook with one or several alternative "
-    "supplier price lists. Each supplier can use its own SKU/EAN matching and "
-    "its own identifier/price columns."
+    "supplier price lists. Each supplier can use SKU, EAN, or combined EAN + SKU "
+    "matching with its own identifier/price columns."
 )
 
 st.info(
@@ -977,36 +1144,113 @@ for index, supplier_file in enumerate(supplier_files, start=1):
 
         match_method = st.radio(
             "Match this supplier using",
-            ["SKU", "EAN"],
+            ["SKU", "EAN", "EAN + SKU"],
             horizontal=True,
             key=f"{base_key}_match",
+            help=(
+                "EAN + SKU tries EAN first. If the EAN is missing or not found "
+                "at this supplier, the app then tries SKU."
+            ),
         )
 
-        id_guess = guess_column(supplier_columns, match_method)
         price_guess = guess_column(supplier_columns, "PRICE")
 
-        col1, col2 = st.columns(2)
+        if match_method == "EAN + SKU":
+            ean_guess = guess_column(supplier_columns, "EAN")
+            sku_guess = guess_column(supplier_columns, "SKU")
 
-        with col1:
-            id_column = st.selectbox(
-                f"Column corresponding to {match_method}",
-                supplier_columns,
-                index=supplier_columns.index(id_guess),
-                key=f"{base_key}_id_col",
-            )
+            col1, col2, col3 = st.columns(3)
 
-        with col2:
-            price_column = st.selectbox(
-                "Price column",
-                supplier_columns,
-                index=supplier_columns.index(price_guess),
-                key=f"{base_key}_price_col",
-            )
+            with col1:
+                ean_column = st.selectbox(
+                    "Column corresponding to EAN",
+                    supplier_columns,
+                    index=supplier_columns.index(ean_guess),
+                    key=f"{base_key}_ean_col",
+                )
 
-        if id_column == price_column:
-            st.warning(
-                "Identifier and price columns are the same. Check this supplier mapping."
-            )
+            with col2:
+                sku_column = st.selectbox(
+                    "Column corresponding to SKU",
+                    supplier_columns,
+                    index=supplier_columns.index(sku_guess),
+                    key=f"{base_key}_sku_col",
+                )
+
+            with col3:
+                price_column = st.selectbox(
+                    "Price column",
+                    supplier_columns,
+                    index=supplier_columns.index(price_guess),
+                    key=f"{base_key}_price_col_both",
+                )
+
+            if ean_column == sku_column:
+                st.warning(
+                    "EAN and SKU columns are the same. Check this supplier mapping."
+                )
+
+            if price_column in (ean_column, sku_column):
+                st.warning(
+                    "Price column is also selected as an identifier column. "
+                    "Check this supplier mapping."
+                )
+
+        elif match_method == "EAN":
+            ean_guess = guess_column(supplier_columns, "EAN")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                ean_column = st.selectbox(
+                    "Column corresponding to EAN",
+                    supplier_columns,
+                    index=supplier_columns.index(ean_guess),
+                    key=f"{base_key}_ean_col",
+                )
+
+            with col2:
+                price_column = st.selectbox(
+                    "Price column",
+                    supplier_columns,
+                    index=supplier_columns.index(price_guess),
+                    key=f"{base_key}_price_col_ean",
+                )
+
+            sku_column = None
+
+            if ean_column == price_column:
+                st.warning(
+                    "Identifier and price columns are the same. Check this supplier mapping."
+                )
+
+        else:
+            sku_guess = guess_column(supplier_columns, "SKU")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                sku_column = st.selectbox(
+                    "Column corresponding to SKU",
+                    supplier_columns,
+                    index=supplier_columns.index(sku_guess),
+                    key=f"{base_key}_sku_col",
+                )
+
+            with col2:
+                price_column = st.selectbox(
+                    "Price column",
+                    supplier_columns,
+                    index=supplier_columns.index(price_guess),
+                    key=f"{base_key}_price_col_sku",
+                )
+
+            ean_column = None
+
+            if sku_column == price_column:
+                st.warning(
+                    "Identifier and price columns are the same. Check this supplier mapping."
+                )
 
         with st.expander("Preview this supplier file"):
             st.dataframe(
@@ -1026,7 +1270,8 @@ for index, supplier_file in enumerate(supplier_files, start=1):
                 "file_name": supplier_file.name,
                 "sheet_name": sheet_name,
                 "match_method": match_method,
-                "id_column": id_column,
+                "ean_column": ean_column,
+                "sku_column": sku_column,
                 "price_column": price_column,
                 "dataframe": supplier_df,
             }
@@ -1073,6 +1318,8 @@ if st.button(
         st.session_state.comparison_supplier_configs = supplier_configs
         st.session_state.comparison_duplicate_info = duplicate_info
         st.session_state.comparison_our_file_name = our_file.name
+        st.session_state.comparison_code_filter_active = False
+        st.session_state.comparison_code_filter_codes = []
 
         st.success("Comparison completed.")
 
@@ -1133,46 +1380,122 @@ if full_result is not None:
         )
 
     # -----------------------------------------------------
-    # Display filter - works without recalculating
+    # Manual EAN / SKU code filter
     # -----------------------------------------------------
 
-    display_option = st.radio(
-        "Display",
-        [
-            "All",
-            "Only supplier cheaper",
-            "Only matched",
-            "Only not found",
-        ],
-        horizontal=True,
-        key="comparison_display_filter",
-    )
-
-    if display_option == "Only supplier cheaper":
-        shown = relevant_result[
-            relevant_result["Status"] == "CHEAPER"
-        ].copy()
-
-    elif display_option == "Only matched":
-        shown = relevant_result[
-            relevant_result["Cheapest Alternative Price"].notna()
-        ].copy()
-
-    elif display_option == "Only not found":
-        shown = relevant_result[
-            relevant_result["Cheapest Alternative Price"].isna()
-        ].copy()
-
-    else:
-        shown = relevant_result.copy()
-
-    # Internal helper column is never shown to the user.
-    shown = shown.drop(columns=["_relevant_for_display"])
+    st.markdown("#### Filter by EAN / SKU codes")
 
     st.caption(
-        f"Showing {len(shown):,} of {len(relevant_result):,} relevant products. "
-        "All uploaded supplier price columns remain visible."
+        "Paste one code per line. You can mix EANs and SKUs. "
+        "The filtered result follows exactly the order you pasted. "
+        "Manual code lookup searches all compared OurPrices products, including "
+        "products normally hidden by the Realisation/Available browser filter."
     )
+
+    st.text_area(
+        "Codes",
+        height=160,
+        placeholder=(
+            "3606486365540\n"
+            "3606486365588\n"
+            "A9R35240\n"
+            "3606480089459"
+        ),
+        key="comparison_code_filter_input",
+    )
+
+    filter_col, clear_col = st.columns([1, 1])
+
+    with filter_col:
+        if st.button(
+            "Filter",
+            type="primary",
+            use_container_width=True,
+            key="comparison_code_filter_button",
+        ):
+            requested_codes = parse_requested_codes(
+                st.session_state.get("comparison_code_filter_input", "")
+            )
+
+            if requested_codes:
+                st.session_state.comparison_code_filter_codes = requested_codes
+                st.session_state.comparison_code_filter_active = True
+            else:
+                st.warning("Paste at least one EAN or SKU before clicking Filter.")
+
+    with clear_col:
+        if st.button(
+            "Clear code filter",
+            use_container_width=True,
+            key="comparison_code_filter_clear",
+        ):
+            st.session_state.comparison_code_filter_active = False
+            st.session_state.comparison_code_filter_codes = []
+
+    manual_filter_active = st.session_state.comparison_code_filter_active
+    requested_codes = st.session_state.comparison_code_filter_codes
+
+    # -----------------------------------------------------
+    # Normal Display filter
+    # -----------------------------------------------------
+
+    if manual_filter_active and requested_codes:
+        shown = filter_result_by_codes(
+            full_result,
+            requested_codes,
+        )
+
+        # Internal helper column is never shown to the user.
+        if "_relevant_for_display" in shown.columns:
+            shown = shown.drop(columns=["_relevant_for_display"])
+
+        code_not_found_count = int(
+            (shown["Lookup Status"] == "CODE NOT FOUND").sum()
+        )
+
+        st.info(
+            f"Code filter active: showing {len(shown):,} pasted code(s) in pasted order. "
+            f"Code not found: {code_not_found_count:,}."
+        )
+
+    else:
+        display_option = st.radio(
+            "Display",
+            [
+                "All",
+                "Only supplier cheaper",
+                "Only matched",
+                "Only not found",
+            ],
+            horizontal=True,
+            key="comparison_display_filter",
+        )
+
+        if display_option == "Only supplier cheaper":
+            shown = relevant_result[
+                relevant_result["Status"] == "CHEAPER"
+            ].copy()
+
+        elif display_option == "Only matched":
+            shown = relevant_result[
+                relevant_result["Cheapest Alternative Price"].notna()
+            ].copy()
+
+        elif display_option == "Only not found":
+            shown = relevant_result[
+                relevant_result["Cheapest Alternative Price"].isna()
+            ].copy()
+
+        else:
+            shown = relevant_result.copy()
+
+        # Internal helper column is never shown to the user.
+        shown = shown.drop(columns=["_relevant_for_display"])
+
+        st.caption(
+            f"Showing {len(shown):,} of {len(relevant_result):,} relevant products. "
+            "All uploaded supplier price columns remain visible."
+        )
 
     st.dataframe(
         style_browser_table(shown, supplier_price_columns),
