@@ -731,8 +731,8 @@ def filter_result_by_codes(
       1. EAN first
       2. SKU fallback
 
-    If a Target Price was pasted, list every alternative supplier whose price
-    is strictly below that target.
+    If a Target Price was pasted, list Our Price and every alternative supplier
+    whose price is strictly below that target.
     """
     if not requested_codes:
         return pd.DataFrame()
@@ -778,9 +778,13 @@ def filter_result_by_codes(
             row_dict["_relevant_for_display"] = False
             lookup_status = "CODE NOT FOUND"
 
-        suppliers_below_target = []
+        below_target = []
 
         if matched_index is not None and pd.notna(target_price):
+            our_price = row_dict.get("Our Price", np.nan)
+            if pd.notna(our_price) and float(our_price) < float(target_price):
+                below_target.append("Our Price")
+
             for price_col in supplier_price_columns:
                 supplier_price = row_dict.get(price_col, np.nan)
                 if pd.notna(supplier_price) and float(supplier_price) < float(target_price):
@@ -789,11 +793,11 @@ def filter_result_by_codes(
                         if price_col.endswith(" Price")
                         else price_col
                     )
-                    suppliers_below_target.append(supplier_name)
+                    below_target.append(supplier_name)
 
         row_dict["Requested Code"] = requested_code
         row_dict["Target Price"] = target_price
-        row_dict["Suppliers Below Target"] = ", ".join(suppliers_below_target)
+        row_dict["Below Target"] = ", ".join(below_target)
         row_dict["Lookup Status"] = lookup_status
         rows.append(row_dict)
 
@@ -802,7 +806,7 @@ def filter_result_by_codes(
     first_columns = [
         "Requested Code",
         "Target Price",
-        "Suppliers Below Target",
+        "Below Target",
         "Lookup Status",
     ]
     remaining_columns = [
@@ -1179,8 +1183,9 @@ def style_browser_table(df, supplier_price_columns):
 
     In Quick code filter mode:
       - Target Price is highlighted in soft blue.
+      - Our Price below Target Price is highlighted blue.
       - Supplier prices below Target Price get a stronger teal highlight.
-      - Suppliers Below Target is highlighted green when at least one supplier wins.
+      - Below Target is highlighted green when at least one price meets the target.
     """
     def style_row(row):
         styles = pd.Series("", index=row.index, dtype=object)
@@ -1201,6 +1206,19 @@ def style_browser_table(df, supplier_price_columns):
         if "Target Price" in styles.index and pd.notna(target_price):
             styles["Target Price"] = (
                 "background-color: #e0f2fe; color: #075985; font-weight: 700;"
+            )
+
+        # Our current price also participates in the target comparison.
+        # Use blue so it is visually distinct from supplier target hits.
+        if (
+            "Our Price" in styles.index
+            and pd.notna(target_price)
+            and pd.notna(our_price)
+            and float(our_price) < float(target_price)
+        ):
+            styles["Our Price"] = (
+                "background-color: #dbeafe; "
+                "color: #1d4ed8; font-weight: 800;"
             )
 
         for col in supplier_price_columns:
@@ -1226,9 +1244,9 @@ def style_browser_table(df, supplier_price_columns):
                     "color: #166534; font-weight: 600;"
                 )
 
-        suppliers_below = str(row.get("Suppliers Below Target", "") or "").strip()
-        if "Suppliers Below Target" in styles.index and suppliers_below:
-            styles["Suppliers Below Target"] = (
+        below_target = str(row.get("Below Target", "") or "").strip()
+        if "Below Target" in styles.index and below_target:
+            styles["Below Target"] = (
                 "background-color: #dcfce7; color: #166534; font-weight: 700;"
             )
 
@@ -1821,8 +1839,8 @@ if full_result is not None:
             st.markdown("**Column 1:** EAN or SKU  \n**Column 2:** Target Price *(optional)*")
         with guide_right:
             st.caption(
-                "When a target is supplied, the result lists every alternative supplier "
-                "whose price is below that target."
+                "When a target is supplied, the result lists **Our Price** and every "
+                "alternative supplier whose price is below that target."
             )
 
         st.text_area(
@@ -1891,7 +1909,7 @@ if full_result is not None:
         )
         target_count = int(shown["Target Price"].notna().sum())
         target_hit_count = int(
-            shown["Suppliers Below Target"].fillna("").astype(str).str.strip().ne("").sum()
+            shown["Below Target"].fillna("").astype(str).str.strip().ne("").sum()
         )
 
         invalid_target_count = sum(
@@ -1906,7 +1924,11 @@ if full_result is not None:
         info1.metric("Requested", f"{len(shown):,}")
         info2.metric("Not found", f"{code_not_found_count:,}")
         info3.metric("With target price", f"{target_count:,}")
-        info4.metric("Target met", f"{target_hit_count:,}")
+        info4.metric(
+            "Target met",
+            f"{target_hit_count:,}",
+            help="Our Price or at least one supplier price is below the pasted target.",
+        )
 
         if invalid_target_count:
             st.warning(
