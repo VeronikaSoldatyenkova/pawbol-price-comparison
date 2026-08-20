@@ -643,11 +643,56 @@ def compare_all_suppliers(our_df, supplier_configs):
 
 
 def parse_requested_codes(text):
+    """
+    Parse the Quick code filter.
+
+    Supported input:
+      CODE
+      CODE<TAB>TARGET_PRICE
+
+    This is designed for direct copy/paste from one or two Excel columns.
+    Target price is optional, so the old one-code-per-line workflow still works.
+    """
     if not text:
         return []
 
-    parts = re.split(r"[\r\n,;]+", text)
-    return [part.strip() for part in parts if part.strip()]
+    requests = []
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        # Excel separates copied cells with tabs. If there is no tab, keep the
+        # whole line as the code so SKUs containing spaces are not broken.
+        if "\t" in line:
+            code_part, target_part = line.split("\t", 1)
+            code = code_part.strip()
+            target_raw = target_part.strip()
+        else:
+            code = line
+            target_raw = ""
+
+        if not code:
+            continue
+
+        target_price = parse_number(target_raw) if target_raw else np.nan
+        target_valid = (
+            bool(target_raw)
+            and pd.notna(target_price)
+            and float(target_price) > 0
+        )
+
+        requests.append(
+            {
+                "code": code,
+                "target_price": float(target_price) if target_valid else np.nan,
+                "target_raw": target_raw,
+                "target_valid": target_valid,
+            }
+        )
+
+    return requests
 
 
 def build_code_lookups(full_result):
@@ -672,10 +717,22 @@ def build_code_lookups(full_result):
     return ean_lookup, sku_lookup
 
 
-def filter_result_by_codes(full_result, requested_codes, ean_lookup, sku_lookup):
+def filter_result_by_codes(
+    full_result,
+    requested_codes,
+    ean_lookup,
+    sku_lookup,
+    supplier_price_columns,
+):
     """
-    Return one row for each pasted code, in exactly the pasted order.
-    EAN is checked first, then SKU.
+    Return one row per pasted request, preserving the exact pasted order.
+
+    Code matching:
+      1. EAN first
+      2. SKU fallback
+
+    If a Target Price was pasted, list every alternative supplier whose price
+    is strictly below that target.
     """
     if not requested_codes:
         return pd.DataFrame()
@@ -689,7 +746,15 @@ def filter_result_by_codes(full_result, requested_codes, ean_lookup, sku_lookup)
         "Status",
     }
 
-    for requested_code in requested_codes:
+    for request in requested_codes:
+        # Backwards compatibility for a session created by an older app version.
+        if isinstance(request, str):
+            requested_code = request
+            target_price = np.nan
+        else:
+            requested_code = request.get("code", "")
+            target_price = request.get("target_price", np.nan)
+
         ean_key = normalize_ean(requested_code)
         sku_key = normalize_sku(requested_code)
 
@@ -713,13 +778,33 @@ def filter_result_by_codes(full_result, requested_codes, ean_lookup, sku_lookup)
             row_dict["_relevant_for_display"] = False
             lookup_status = "CODE NOT FOUND"
 
+        suppliers_below_target = []
+
+        if matched_index is not None and pd.notna(target_price):
+            for price_col in supplier_price_columns:
+                supplier_price = row_dict.get(price_col, np.nan)
+                if pd.notna(supplier_price) and float(supplier_price) < float(target_price):
+                    supplier_name = (
+                        price_col[:-len(" Price")]
+                        if price_col.endswith(" Price")
+                        else price_col
+                    )
+                    suppliers_below_target.append(supplier_name)
+
         row_dict["Requested Code"] = requested_code
+        row_dict["Target Price"] = target_price
+        row_dict["Suppliers Below Target"] = ", ".join(suppliers_below_target)
         row_dict["Lookup Status"] = lookup_status
         rows.append(row_dict)
 
     filtered = pd.DataFrame(rows)
 
-    first_columns = ["Requested Code", "Lookup Status"]
+    first_columns = [
+        "Requested Code",
+        "Target Price",
+        "Suppliers Below Target",
+        "Lookup Status",
+    ]
     remaining_columns = [
         col for col in full_result.columns
         if col not in first_columns
@@ -1090,23 +1175,48 @@ def create_excel(
 
 def style_browser_table(df, supplier_price_columns):
     """
-    Keep styling intentionally light: only cheaper supplier cells, cheapest
-    columns, and manual-code misses are highlighted.
+    Light table styling.
+
+    In Quick code filter mode:
+      - Target Price is highlighted in soft blue.
+      - Supplier prices below Target Price get a stronger teal highlight.
+      - Suppliers Below Target is highlighted green when at least one supplier wins.
     """
     def style_row(row):
         styles = pd.Series("", index=row.index, dtype=object)
 
         if row.get("Lookup Status", "") == "CODE NOT FOUND":
             styles[:] = "background-color: #f1f5f9; color: #475569;"
+            if "Target Price" in styles.index and pd.notna(row.get("Target Price", np.nan)):
+                styles["Target Price"] = (
+                    "background-color: #e0f2fe; color: #075985; font-weight: 700;"
+                )
             return styles
 
         our_price = row.get("Our Price", np.nan)
+        target_price = row.get("Target Price", np.nan)
         cheapest_price = row.get("Cheapest Alternative Price", np.nan)
         cheapest_supplier = row.get("Cheapest Supplier", "")
 
+        if "Target Price" in styles.index and pd.notna(target_price):
+            styles["Target Price"] = (
+                "background-color: #e0f2fe; color: #075985; font-weight: 700;"
+            )
+
         for col in supplier_price_columns:
             supplier_price = row.get(col, np.nan)
+
+            # Target is the stronger signal in Quick code filter mode.
             if (
+                pd.notna(target_price)
+                and pd.notna(supplier_price)
+                and supplier_price < target_price
+            ):
+                styles[col] = (
+                    "background-color: #ccfbf1; "
+                    "color: #115e59; font-weight: 800;"
+                )
+            elif (
                 pd.notna(supplier_price)
                 and pd.notna(our_price)
                 and supplier_price < our_price
@@ -1115,6 +1225,12 @@ def style_browser_table(df, supplier_price_columns):
                     "background-color: #dcfce7; "
                     "color: #166534; font-weight: 600;"
                 )
+
+        suppliers_below = str(row.get("Suppliers Below Target", "") or "").strip()
+        if "Suppliers Below Target" in styles.index and suppliers_below:
+            styles["Suppliers Below Target"] = (
+                "background-color: #dcfce7; color: #166534; font-weight: 700;"
+            )
 
         if pd.notna(cheapest_price):
             if "Cheapest Alternative Price" in styles.index:
@@ -1133,6 +1249,7 @@ def style_browser_table(df, supplier_price_columns):
 
     formatters = {
         "Our Price": "€{:.2f}",
+        "Target Price": "€{:.2f}",
         "Cheapest Alternative Price": "€{:.2f}",
         "Saving €": "€{:.2f}",
         "Saving %": "{:.2%}",
@@ -1694,18 +1811,29 @@ if full_result is not None:
     with st.container(border=True):
         st.markdown("#### Quick code filter")
         st.caption(
-            "Paste EANs, SKUs, or a mix — one per line. "
-            "Results follow the pasted order and search all compared OurPrices rows."
+            "Paste one or two columns directly from Excel: **EAN/SKU** and an optional "
+            "**Target Price**. Results keep the exact pasted order and search all "
+            "compared OurPrices rows."
         )
 
+        guide_left, guide_right = st.columns([1.3, 2.7])
+        with guide_left:
+            st.markdown("**Column 1:** EAN or SKU  \n**Column 2:** Target Price *(optional)*")
+        with guide_right:
+            st.caption(
+                "When a target is supplied, the result lists every alternative supplier "
+                "whose price is below that target."
+            )
+
         st.text_area(
-            "Codes",
-            height=135,
+            "Codes and optional target prices",
+            height=155,
             placeholder=(
-                "3606486365540\n"
-                "3606486365588\n"
-                "A9R35240\n"
-                "3606480089459"
+                "3606481482679\t10\n"
+                "3606480790065\t5\n"
+                "3606480789861\t5\n"
+                "A9R35240\t12.50\n"
+                "3606480303357"
             ),
             key="comparison_code_filter_input",
             label_visibility="collapsed",
@@ -1752,6 +1880,7 @@ if full_result is not None:
             requested_codes,
             st.session_state.comparison_ean_lookup,
             st.session_state.comparison_sku_lookup,
+            supplier_price_columns,
         )
 
         if "_relevant_for_display" in shown.columns:
@@ -1760,11 +1889,31 @@ if full_result is not None:
         code_not_found_count = int(
             (shown["Lookup Status"] == "CODE NOT FOUND").sum()
         )
-
-        st.info(
-            f"Code filter active · {len(shown):,} requested · "
-            f"{code_not_found_count:,} not found"
+        target_count = int(shown["Target Price"].notna().sum())
+        target_hit_count = int(
+            shown["Suppliers Below Target"].fillna("").astype(str).str.strip().ne("").sum()
         )
+
+        invalid_target_count = sum(
+            1
+            for request in requested_codes
+            if isinstance(request, dict)
+            and request.get("target_raw")
+            and not request.get("target_valid")
+        )
+
+        info1, info2, info3, info4 = st.columns(4)
+        info1.metric("Requested", f"{len(shown):,}")
+        info2.metric("Not found", f"{code_not_found_count:,}")
+        info3.metric("With target price", f"{target_count:,}")
+        info4.metric("Target met", f"{target_hit_count:,}")
+
+        if invalid_target_count:
+            st.warning(
+                f"{invalid_target_count:,} pasted target price(s) could not be parsed "
+                "or were not greater than zero. Those rows are still shown, but target "
+                "comparison was skipped."
+            )
 
     else:
         display_option = st.radio(
