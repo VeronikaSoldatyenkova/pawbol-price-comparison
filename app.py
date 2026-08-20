@@ -1,3 +1,4 @@
+import hashlib
 import io
 import math
 import re
@@ -11,13 +12,177 @@ from xlsxwriter.utility import xl_col_to_name
 
 
 # =========================================================
-# PAGE CONFIGURATION
+# PAGE CONFIGURATION + UI THEME
 # =========================================================
 
 st.set_page_config(
     page_title="Price List Comparison",
     page_icon="📊",
     layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+st.markdown(
+    """
+    <style>
+        :root {
+            --pc-primary: #0f766e;
+            --pc-primary-hover: #115e59;
+            --pc-primary-soft: #ecfdf5;
+            --pc-ink: #0f172a;
+            --pc-muted: #64748b;
+            --pc-border: #e2e8f0;
+            --pc-surface: #ffffff;
+            --pc-soft: #f8fafc;
+            --pc-warning: #fff7ed;
+        }
+
+        .block-container {
+            padding-top: 2rem;
+            padding-bottom: 3rem;
+            max-width: 1550px;
+        }
+
+        h1, h2, h3, h4 {
+            color: var(--pc-ink);
+        }
+
+        .pc-hero {
+            padding: 1.25rem 1.4rem;
+            border: 1px solid var(--pc-border);
+            border-radius: 16px;
+            background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+            margin-bottom: 1rem;
+        }
+
+        .pc-hero-title {
+            margin: 0;
+            font-size: 1.85rem;
+            font-weight: 750;
+            letter-spacing: -0.02em;
+            color: var(--pc-ink);
+        }
+
+        .pc-hero-subtitle {
+            margin: .35rem 0 0 0;
+            color: var(--pc-muted);
+            font-size: .98rem;
+        }
+
+        .pc-step {
+            display: inline-flex;
+            align-items: center;
+            gap: .55rem;
+            margin: .4rem 0 .65rem 0;
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: var(--pc-ink);
+        }
+
+        .pc-step-number {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            border-radius: 999px;
+            background: var(--pc-primary-soft);
+            color: var(--pc-primary);
+            font-size: .86rem;
+            font-weight: 800;
+        }
+
+        div[data-testid="stMetric"] {
+            background: var(--pc-surface);
+            border: 1px solid var(--pc-border);
+            border-radius: 12px;
+            padding: .85rem 1rem;
+        }
+
+        div[data-testid="stMetricLabel"] {
+            color: var(--pc-muted);
+        }
+
+        div[data-testid="stExpander"] {
+            border: 1px solid var(--pc-border);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        div[data-testid="stFileUploader"] {
+            border-radius: 12px;
+        }
+
+        /* Primary actions: teal, never Streamlit red */
+        .stButton > button[kind="primary"],
+        .stDownloadButton > button[kind="primary"],
+        button[kind="primary"] {
+            background: var(--pc-primary) !important;
+            border-color: var(--pc-primary) !important;
+            color: white !important;
+            box-shadow: none !important;
+        }
+
+        .stButton > button[kind="primary"]:hover,
+        .stDownloadButton > button[kind="primary"]:hover,
+        button[kind="primary"]:hover {
+            background: var(--pc-primary-hover) !important;
+            border-color: var(--pc-primary-hover) !important;
+            color: white !important;
+        }
+
+        /* Secondary buttons: clean white / slate */
+        .stButton > button[kind="secondary"],
+        .stDownloadButton > button[kind="secondary"],
+        button[kind="secondary"] {
+            background: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #334155 !important;
+            box-shadow: none !important;
+        }
+
+        .stButton > button[kind="secondary"]:hover,
+        .stDownloadButton > button[kind="secondary"]:hover,
+        button[kind="secondary"]:hover {
+            background: #f8fafc !important;
+            border-color: #94a3b8 !important;
+            color: #0f172a !important;
+        }
+
+        button:focus {
+            box-shadow: 0 0 0 2px rgba(15, 118, 110, .18) !important;
+        }
+
+        .stTextInput input:focus,
+        .stTextArea textarea:focus {
+            border-color: var(--pc-primary) !important;
+            box-shadow: 0 0 0 1px var(--pc-primary) !important;
+        }
+
+        div[data-baseweb="select"] > div:focus-within {
+            border-color: var(--pc-primary) !important;
+        }
+
+        .pc-note {
+            border-left: 3px solid var(--pc-primary);
+            background: #f0fdfa;
+            color: #334155;
+            border-radius: 8px;
+            padding: .75rem .9rem;
+            margin: .35rem 0 .8rem 0;
+            font-size: .92rem;
+        }
+
+        .pc-muted {
+            color: var(--pc-muted);
+            font-size: .9rem;
+        }
+
+        #MainMenu {visibility: hidden;}
+        footer {visibility: hidden;}
+    </style>
+    """,
+    unsafe_allow_html=True,
 )
 
 
@@ -50,15 +215,28 @@ OUR_NUMERIC_COLUMNS = [
 # HELPERS
 # =========================================================
 
+def section_title(number: int, title: str):
+    st.markdown(
+        f"""
+        <div class="pc-step">
+            <span class="pc-step-number">{number}</span>
+            <span>{title}</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 def safe_widget_key(text: str) -> str:
-    """Create a Streamlit-safe widget key."""
     return re.sub(r"[^A-Za-z0-9_-]+", "_", str(text))
 
 
+@st.cache_data(show_spinner=False)
+def file_digest(file_bytes: bytes) -> str:
+    return hashlib.sha256(file_bytes).hexdigest()
+
 
 def normalize_ean(value):
-    """Normalize EAN/GTIN values coming from Excel."""
     if pd.isna(value):
         return None
 
@@ -77,16 +255,13 @@ def normalize_ean(value):
     if not text:
         return None
 
-    # Excel can turn an integer-looking EAN into "1234567890123.0"
     if re.fullmatch(r"\d+\.0+", text):
         text = text.split(".")[0]
 
     return text.upper()
 
 
-
 def normalize_sku(value):
-    """Normalize SKU/article values."""
     if pd.isna(value):
         return None
 
@@ -105,9 +280,8 @@ def normalize_sku(value):
     return text.upper() if text else None
 
 
-
 def parse_number(value):
-    """Parse common European/US Excel price formats into float."""
+    """Fallback parser for uncommon text price formats."""
     if pd.isna(value):
         return np.nan
 
@@ -118,21 +292,17 @@ def parse_number(value):
             return np.nan
 
     text = str(value).strip().replace("\u00A0", "").replace(" ", "")
-
     if not text:
         return np.nan
 
     text = re.sub(r"[€$£]", "", text)
 
     if "," in text and "." in text:
-        # 1.234,56
         if text.rfind(",") > text.rfind("."):
             text = text.replace(".", "").replace(",", ".")
-        # 1,234.56
         else:
             text = text.replace(",", "")
     elif "," in text:
-        # 123,45
         text = text.replace(",", ".")
 
     text = re.sub(r"[^0-9.\-]", "", text)
@@ -143,9 +313,21 @@ def parse_number(value):
         return np.nan
 
 
+def parse_numeric_series(series: pd.Series) -> pd.Series:
+    """
+    Fast path for numeric Excel cells, with a fallback only for text cells
+    that pandas could not convert directly.
+    """
+    result = pd.to_numeric(series, errors="coerce")
+    fallback_mask = result.isna() & series.notna()
+
+    if fallback_mask.any():
+        result.loc[fallback_mask] = series.loc[fallback_mask].map(parse_number)
+
+    return result.astype(float)
+
 
 def guess_column(columns, kind):
-    """Try to preselect the most likely supplier column."""
     columns = list(columns)
     lowered = {str(c).strip().lower(): c for c in columns}
 
@@ -192,8 +374,6 @@ def guess_column(columns, kind):
                 return col
 
     if kind == "PRICE":
-        # More specific names first so a column such as SalesPrice is preferred
-        # over another column merely containing the word "price".
         price_words = [
             "salesprice",
             "sales price",
@@ -227,25 +407,22 @@ def read_excel_sheet(file_bytes, sheet_name):
     )
 
 
-
 def prepare_our_prices(our_df):
-    """
-    Prepare ALL OurPrices rows.
-
-    Important: no Realisation/Available filtering is performed here because
-    the downloaded workbook must contain all products.
-    """
     our = our_df.copy()
 
     for col in OUR_NUMERIC_COLUMNS:
-        our[col] = our[col].map(parse_number)
+        our[col] = parse_numeric_series(our[col])
 
     our["EAN"] = our["EAN"].map(normalize_ean)
     our["SKU"] = our["SKU"].map(
         lambda x: None if pd.isna(x) else str(x).strip().replace("\u00A0", "")
     )
 
-    # This flag is used ONLY for the browser display.
+    # Precompute matching keys once. These are used for every supplier.
+    our["_ean_key"] = our["EAN"].map(normalize_ean)
+    our["_sku_key"] = our["SKU"].map(normalize_sku)
+
+    # Browser-only filter. Excel export still receives all rows.
     our["_relevant_for_display"] = (
         our["Realisation Summ"].fillna(0).gt(0)
         | our["Net Available Qty"].fillna(0).gt(0)
@@ -254,13 +431,7 @@ def prepare_our_prices(our_df):
     return our
 
 
-
 def _build_identifier_price_map(supplier, id_column, normalizer):
-    """
-    Build normalized identifier -> lowest valid supplier price.
-
-    `supplier` must already contain the parsed `_price` column.
-    """
     temp = supplier[[id_column, "_price"]].copy()
     temp["_key"] = temp[id_column].map(normalizer)
     temp = temp.dropna(subset=["_key", "_price"]).copy()
@@ -272,26 +443,13 @@ def _build_identifier_price_map(supplier, id_column, normalizer):
         ].nunique()
     )
 
-    # If the same identifier appears more than once, use the cheapest valid price.
-    best = temp.groupby("_key", as_index=True)["_price"].min()
-
+    best = temp.groupby("_key", sort=False)["_price"].min()
     return best.to_dict(), duplicate_count
 
 
 def prepare_supplier_price_maps(supplier_df, config):
-    """
-    Prepare one or two supplier lookup maps.
-
-    Supported match methods:
-      - SKU
-      - EAN
-      - EAN + SKU
-
-    For EAN + SKU the comparison always tries EAN first and only falls back
-    to SKU when the EAN lookup does not find a supplier price.
-    """
     supplier = supplier_df.copy()
-    supplier["_price"] = supplier[config["price_column"]].map(parse_number)
+    supplier["_price"] = parse_numeric_series(supplier[config["price_column"]])
 
     match_method = config["match_method"]
     price_maps = {}
@@ -320,17 +478,14 @@ def prepare_supplier_price_maps(supplier_df, config):
 
 def compare_all_suppliers(our_df, supplier_configs):
     """
-    Compare every OurPrices row against all uploaded suppliers.
+    Compare every OurPrices row against all suppliers.
 
-    Every supplier can independently use SKU, EAN, or EAN + SKU matching and
-    can use differently named identifier/price columns.
-
-    When EAN + SKU is selected, EAN has priority. SKU is used only if the EAN
-    lookup fails for that product.
+    EAN + SKU rule:
+      1. EAN match first.
+      2. SKU is used only when the EAN lookup has no supplier price.
     """
     result = prepare_our_prices(our_df)
 
-    # Retain only the columns wanted in the final result plus the display flag.
     result = result[
         [
             "EAN",
@@ -341,6 +496,8 @@ def compare_all_suppliers(our_df, supplier_configs):
             "Days Since Last Sale",
             "MinStock",
             "MaxStock",
+            "_ean_key",
+            "_sku_key",
             "_relevant_for_display",
         ]
     ].copy()
@@ -350,8 +507,8 @@ def compare_all_suppliers(our_df, supplier_configs):
     supplier_price_columns = []
     duplicate_info = {}
 
-    normalized_our_ean = result["EAN"].map(normalize_ean)
-    normalized_our_sku = result["SKU"].map(normalize_sku)
+    normalized_our_ean = result["_ean_key"]
+    normalized_our_sku = result["_sku_key"]
 
     for config in supplier_configs:
         supplier_name = config["supplier_name"]
@@ -371,9 +528,6 @@ def compare_all_suppliers(our_df, supplier_configs):
             result[price_col] = normalized_our_sku.map(price_maps["SKU"])
 
         else:
-            # EAN + SKU:
-            # 1) try EAN
-            # 2) only if no EAN match, try SKU
             ean_prices = normalized_our_ean.map(price_maps["EAN"])
             sku_prices = normalized_our_sku.map(price_maps["SKU"])
             result[price_col] = ean_prices.combine_first(sku_prices)
@@ -381,9 +535,8 @@ def compare_all_suppliers(our_df, supplier_configs):
         supplier_price_columns.append(price_col)
         duplicate_info[supplier_name] = duplicate_count
 
-    # -----------------------------------------------------
-    # Best price across all suppliers
-    # -----------------------------------------------------
+    # Remove internal matching keys before producing the result.
+    result = result.drop(columns=["_ean_key", "_sku_key"])
 
     if supplier_price_columns:
         supplier_prices = result[supplier_price_columns].apply(
@@ -391,33 +544,30 @@ def compare_all_suppliers(our_df, supplier_configs):
             errors="coerce",
         )
 
+        has_match = supplier_prices.notna().any(axis=1)
+
         result["Cheapest Alternative Price"] = supplier_prices.min(
             axis=1,
             skipna=True,
         )
 
-        def cheapest_supplier_for_row(row):
-            valid = row.dropna()
-            if valid.empty:
-                return ""
-            cheapest_col = valid.idxmin()
-            return cheapest_col[: -len(" Price")]
+        # Vectorized replacement for a row-by-row Python apply.
+        cheapest_cols = pd.Series(pd.NA, index=supplier_prices.index, dtype="object")
+        if has_match.any():
+            cheapest_cols.loc[has_match] = supplier_prices.loc[has_match].idxmin(axis=1)
 
-        result["Cheapest Supplier"] = supplier_prices.apply(
-            cheapest_supplier_for_row,
-            axis=1,
+        cheapest_names = cheapest_cols.astype("string").str.replace(
+            r" Price$",
+            "",
+            regex=True,
         )
-
-        result["Matched Suppliers"] = supplier_prices.notna().sum(axis=1)
+        result["Cheapest Supplier"] = cheapest_names.where(has_match, "").fillna("")
+        result["Matched Suppliers"] = supplier_prices.notna().sum(axis=1).astype(int)
 
     else:
         result["Cheapest Alternative Price"] = np.nan
         result["Cheapest Supplier"] = ""
         result["Matched Suppliers"] = 0
-
-    # -----------------------------------------------------
-    # Comparison versus our current price
-    # -----------------------------------------------------
 
     result["Saving €"] = result["Our Price"] - result["Cheapest Alternative Price"]
 
@@ -427,27 +577,26 @@ def compare_all_suppliers(our_df, supplier_configs):
         np.nan,
     )
 
-    def overall_status(row):
-        alternative = row["Cheapest Alternative Price"]
-        our_price = row["Our Price"]
+    alt = result["Cheapest Alternative Price"]
+    our = result["Our Price"]
 
-        if pd.isna(alternative):
-            return "NOT FOUND"
+    # Vectorized status calculation.
+    result["Status"] = np.select(
+        [
+            alt.isna(),
+            our.isna(),
+            alt < (our - 0.0000001),
+            alt > (our + 0.0000001),
+        ],
+        [
+            "NOT FOUND",
+            "OUR PRICE MISSING",
+            "CHEAPER",
+            "MORE EXPENSIVE",
+        ],
+        default="SAME PRICE",
+    )
 
-        if pd.isna(our_price):
-            return "OUR PRICE MISSING"
-
-        if alternative < our_price - 0.0000001:
-            return "CHEAPER"
-
-        if alternative > our_price + 0.0000001:
-            return "MORE EXPENSIVE"
-
-        return "SAME PRICE"
-
-    result["Status"] = result.apply(overall_status, axis=1)
-
-    # Arrange columns. All individual supplier prices remain visible.
     final_columns = (
         ["EAN", "SKU", "Our Price"]
         + supplier_price_columns
@@ -469,7 +618,6 @@ def compare_all_suppliers(our_df, supplier_configs):
 
     result = result[final_columns].copy()
 
-    # Put useful/cheaper products first while preserving all products.
     status_order = {
         "CHEAPER": 1,
         "SAME PRICE": 2,
@@ -485,6 +633,7 @@ def compare_all_suppliers(our_df, supplier_configs):
             ["_sort_order", "Saving €"],
             ascending=[True, False],
             na_position="last",
+            kind="stable",
         )
         .drop(columns=["_sort_order"])
         .reset_index(drop=True)
@@ -494,43 +643,42 @@ def compare_all_suppliers(our_df, supplier_configs):
 
 
 def parse_requested_codes(text):
-    """Parse pasted EAN/SKU values while preserving the user's order."""
     if not text:
         return []
 
-    # Primarily line-based, but commas/semicolons are also accepted.
     parts = re.split(r"[\r\n,;]+", text)
     return [part.strip() for part in parts if part.strip()]
 
 
-def filter_result_by_codes(full_result, requested_codes):
+def build_code_lookups(full_result):
     """
-    Return exactly one row per requested code, in the same order as pasted.
-
-    The lookup accepts an EAN, an SKU, or a mix. EAN is checked first and SKU
-    second. The lookup uses the full comparison result, so a manually requested
-    product can be shown even if it is normally hidden by the browser's
-    Realisation/Available filter.
-
-    If a code is not found, a placeholder row is retained with CODE NOT FOUND.
+    Build code -> row-index dictionaries once per comparison instead of scanning
+    every OurPrices row each time the user clicks Filter.
     """
-    if not requested_codes:
-        return pd.DataFrame()
-
     ean_lookup = {}
     sku_lookup = {}
 
-    for idx, row in full_result.iterrows():
-        ean_key = normalize_ean(row.get("EAN"))
-        sku_key = normalize_sku(row.get("SKU"))
+    ean_keys = full_result["EAN"].map(normalize_ean)
+    sku_keys = full_result["SKU"].map(normalize_sku)
 
-        # Keep the first OurPrices row for a duplicated identifier so that one
-        # pasted code always produces one result row.
-        if ean_key and ean_key not in ean_lookup:
-            ean_lookup[ean_key] = idx
+    for idx, key in zip(full_result.index, ean_keys):
+        if key and key not in ean_lookup:
+            ean_lookup[key] = idx
 
-        if sku_key and sku_key not in sku_lookup:
-            sku_lookup[sku_key] = idx
+    for idx, key in zip(full_result.index, sku_keys):
+        if key and key not in sku_lookup:
+            sku_lookup[key] = idx
+
+    return ean_lookup, sku_lookup
+
+
+def filter_result_by_codes(full_result, requested_codes, ean_lookup, sku_lookup):
+    """
+    Return one row for each pasted code, in exactly the pasted order.
+    EAN is checked first, then SKU.
+    """
+    if not requested_codes:
+        return pd.DataFrame()
 
     rows = []
 
@@ -558,10 +706,10 @@ def filter_result_by_codes(full_result, requested_codes):
         if matched_index is not None:
             row_dict = full_result.loc[matched_index].to_dict()
         else:
-            row_dict = {}
-            for col in full_result.columns:
-                row_dict[col] = "" if col in text_columns else np.nan
-
+            row_dict = {
+                col: ("" if col in text_columns else np.nan)
+                for col in full_result.columns
+            }
             row_dict["_relevant_for_display"] = False
             lookup_status = "CODE NOT FOUND"
 
@@ -580,6 +728,44 @@ def filter_result_by_codes(full_result, requested_codes):
     return filtered[first_columns + remaining_columns]
 
 
+def lightweight_supplier_configs(supplier_configs):
+    """Do not keep uploaded supplier DataFrames in session state after comparison."""
+    return [
+        {
+            key: value
+            for key, value in config.items()
+            if key != "dataframe"
+        }
+        for config in supplier_configs
+    ]
+
+
+def comparison_signature(our_bytes, our_sheet, supplier_configs):
+    """
+    Detect stale results when the user changes files or mapping settings after
+    a comparison. This prevents old results being shown under new settings.
+    """
+    parts = [
+        file_digest(our_bytes),
+        str(our_sheet),
+    ]
+
+    for config in supplier_configs:
+        parts.extend(
+            [
+                config["file_digest"],
+                config["supplier_name"].casefold(),
+                str(config["sheet_name"]),
+                str(config["match_method"]),
+                str(config.get("ean_column")),
+                str(config.get("sku_column")),
+                str(config["price_column"]),
+            ]
+        )
+
+    return hashlib.sha256("||".join(parts).encode("utf-8")).hexdigest()
+
+
 def create_excel(
     full_result,
     supplier_price_columns,
@@ -588,7 +774,8 @@ def create_excel(
     our_file_name,
 ):
     """
-    Export ALL OurPrices products, not only products relevant for browser display.
+    Export all OurPrices products. This function is called once per comparison
+    and its bytes are then stored in session state.
     """
     export_result = full_result.drop(columns=["_relevant_for_display"]).copy()
 
@@ -602,11 +789,26 @@ def create_excel(
         ("Suppliers uploaded", len(supplier_configs)),
         ("All OurPrices products exported", len(full_result)),
         ("Relevant products shown in browser", int(relevant_mask.sum())),
-        ("Products matched with at least one supplier", int(full_result["Cheapest Alternative Price"].notna().sum())),
-        ("Products where at least one supplier is cheaper", int((full_result["Status"] == "CHEAPER").sum())),
-        ("Products where cheapest supplier is more expensive", int((full_result["Status"] == "MORE EXPENSIVE").sum())),
-        ("Products with same cheapest price", int((full_result["Status"] == "SAME PRICE").sum())),
-        ("Products not found at any supplier", int((full_result["Status"] == "NOT FOUND").sum())),
+        (
+            "Products matched with at least one supplier",
+            int(full_result["Cheapest Alternative Price"].notna().sum()),
+        ),
+        (
+            "Products where at least one supplier is cheaper",
+            int((full_result["Status"] == "CHEAPER").sum()),
+        ),
+        (
+            "Products where cheapest supplier is more expensive",
+            int((full_result["Status"] == "MORE EXPENSIVE").sum()),
+        ),
+        (
+            "Products with same cheapest price",
+            int((full_result["Status"] == "SAME PRICE").sum()),
+        ),
+        (
+            "Products not found at any supplier",
+            int((full_result["Status"] == "NOT FOUND").sum()),
+        ),
     ]
 
     for config in supplier_configs:
@@ -640,7 +842,10 @@ def create_excel(
         supplier_summary_rows.extend(
             [
                 (f"{supplier_name} - price column", config["price_column"]),
-                (f"{supplier_name} - matched products", int(full_result[price_col].notna().sum())),
+                (
+                    f"{supplier_name} - matched products",
+                    int(full_result[price_col].notna().sum()),
+                ),
                 (
                     f"{supplier_name} - cheaper than our current price",
                     int(
@@ -661,7 +866,6 @@ def create_excel(
         summary_rows.extend(supplier_summary_rows)
 
     summary_df = pd.DataFrame(summary_rows, columns=["Metric", "Value"])
-
     buffer = io.BytesIO()
 
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
@@ -681,10 +885,6 @@ def create_excel(
         worksheet = writer.sheets["Price Comparison"]
         summary_ws = writer.sheets["Summary"]
 
-        # -------------------------------------------------
-        # Formats
-        # -------------------------------------------------
-
         header_fmt = workbook.add_format(
             {
                 "bold": True,
@@ -692,6 +892,8 @@ def create_excel(
                 "align": "center",
                 "valign": "vcenter",
                 "text_wrap": True,
+                "bg_color": "#0F766E",
+                "font_color": "#FFFFFF",
             }
         )
 
@@ -713,26 +915,28 @@ def create_excel(
 
         supplier_cheaper_fmt = workbook.add_format(
             {
-                "bg_color": "#C6EFCE",
-                "font_color": "#006100",
+                "bg_color": "#DCFCE7",
+                "font_color": "#166534",
             }
         )
 
         cheapest_fmt = workbook.add_format(
             {
-                "bg_color": "#FFF2CC",
-                "font_color": "#7F6000",
+                "bg_color": "#FEF3C7",
+                "font_color": "#92400E",
                 "bold": True,
             }
         )
 
-        # Rewrite header with consistent formatting.
+        not_found_fmt = workbook.add_format(
+            {
+                "bg_color": "#F1F5F9",
+                "font_color": "#475569",
+            }
+        )
+
         for col_idx, name in enumerate(export_result.columns):
             worksheet.write(0, col_idx, name, header_fmt)
-
-        # -------------------------------------------------
-        # Column widths and number formats
-        # -------------------------------------------------
 
         widths = {
             "EAN": 17,
@@ -800,7 +1004,8 @@ def create_excel(
                 i = positions[name]
                 worksheet.set_column(i, i, widths.get(name, 15), integer_fmt)
 
-        worksheet.freeze_panes(1, 0)
+        # Freeze header + EAN/SKU/Our Price when scrolling.
+        worksheet.freeze_panes(1, 3)
 
         if len(export_result):
             worksheet.autofilter(
@@ -809,11 +1014,6 @@ def create_excel(
                 len(export_result),
                 len(export_result.columns) - 1,
             )
-
-            # -------------------------------------------------
-            # Highlight every supplier price that is cheaper
-            # than Our Price.
-            # -------------------------------------------------
 
             our_price_letter = xl_col_to_name(positions["Our Price"])
 
@@ -836,11 +1036,6 @@ def create_excel(
                         "format": supplier_cheaper_fmt,
                     },
                 )
-
-            # -------------------------------------------------
-            # Highlight the chosen cheapest price + supplier.
-            # This works whether or not that price beats ours.
-            # -------------------------------------------------
 
             cheapest_price_idx = positions["Cheapest Alternative Price"]
             cheapest_supplier_idx = positions["Cheapest Supplier"]
@@ -867,7 +1062,20 @@ def create_excel(
                 },
             )
 
-        # Summary sheet formatting
+            status_idx = positions["Status"]
+            status_letter = xl_col_to_name(status_idx)
+            worksheet.conditional_format(
+                1,
+                0,
+                len(export_result),
+                len(export_result.columns) - 1,
+                {
+                    "type": "formula",
+                    "criteria": f'=${status_letter}2="NOT FOUND"',
+                    "format": not_found_fmt,
+                },
+            )
+
         summary_ws.set_column("A:A", 48)
         summary_ws.set_column("B:B", 45)
 
@@ -880,22 +1088,22 @@ def create_excel(
     return buffer.getvalue()
 
 
-
 def style_browser_table(df, supplier_price_columns):
-    """Highlight cheaper supplier cells and the cheapest supplier/price."""
-
+    """
+    Keep styling intentionally light: only cheaper supplier cells, cheapest
+    columns, and manual-code misses are highlighted.
+    """
     def style_row(row):
         styles = pd.Series("", index=row.index, dtype=object)
 
         if row.get("Lookup Status", "") == "CODE NOT FOUND":
-            styles[:] = "background-color: #f8d7da; color: #842029;"
+            styles[:] = "background-color: #f1f5f9; color: #475569;"
             return styles
 
         our_price = row.get("Our Price", np.nan)
         cheapest_price = row.get("Cheapest Alternative Price", np.nan)
         cheapest_supplier = row.get("Cheapest Supplier", "")
 
-        # Mark each supplier price that is cheaper than our current price.
         for col in supplier_price_columns:
             supplier_price = row.get(col, np.nan)
             if (
@@ -903,18 +1111,22 @@ def style_browser_table(df, supplier_price_columns):
                 and pd.notna(our_price)
                 and supplier_price < our_price
             ):
-                styles[col] = "background-color: #d8f3dc; color: #006100;"
+                styles[col] = (
+                    "background-color: #dcfce7; "
+                    "color: #166534; font-weight: 600;"
+                )
 
-        # Mark the selected cheapest offer.
         if pd.notna(cheapest_price):
             if "Cheapest Alternative Price" in styles.index:
                 styles["Cheapest Alternative Price"] = (
-                    "background-color: #fff2cc; color: #7f6000; font-weight: bold;"
+                    "background-color: #fef3c7; "
+                    "color: #92400e; font-weight: 700;"
                 )
 
             if "Cheapest Supplier" in styles.index and cheapest_supplier:
                 styles["Cheapest Supplier"] = (
-                    "background-color: #fff2cc; color: #7f6000; font-weight: bold;"
+                    "background-color: #fef3c7; "
+                    "color: #92400e; font-weight: 700;"
                 )
 
         return styles
@@ -930,7 +1142,6 @@ def style_browser_table(df, supplier_price_columns):
     for col in supplier_price_columns:
         formatters[col] = "€{:.2f}"
 
-    # Only use formatters for columns that currently exist.
     formatters = {
         key: value
         for key, value in formatters.items()
@@ -940,141 +1151,174 @@ def style_browser_table(df, supplier_price_columns):
     return df.style.apply(style_row, axis=1).format(formatters, na_rep="")
 
 
+def reset_comparison_state():
+    st.session_state.comparison_result = None
+    st.session_state.comparison_supplier_columns = []
+    st.session_state.comparison_supplier_configs = []
+    st.session_state.comparison_duplicate_info = {}
+    st.session_state.comparison_our_file_name = ""
+    st.session_state.comparison_signature = ""
+    st.session_state.comparison_excel_bytes = None
+    st.session_state.comparison_ean_lookup = {}
+    st.session_state.comparison_sku_lookup = {}
+    st.session_state.comparison_code_filter_active = False
+    st.session_state.comparison_code_filter_codes = []
+
+
 # =========================================================
 # SESSION STATE
 # =========================================================
 
-# The comparison is stored here. This is the important part that prevents the
-# result from disappearing every time the user changes the Display radio.
-if "comparison_result" not in st.session_state:
-    st.session_state.comparison_result = None
+SESSION_DEFAULTS = {
+    "comparison_result": None,
+    "comparison_supplier_columns": [],
+    "comparison_supplier_configs": [],
+    "comparison_duplicate_info": {},
+    "comparison_our_file_name": "",
+    "comparison_signature": "",
+    "comparison_excel_bytes": None,
+    "comparison_ean_lookup": {},
+    "comparison_sku_lookup": {},
+    "comparison_code_filter_active": False,
+    "comparison_code_filter_codes": [],
+}
 
-if "comparison_supplier_columns" not in st.session_state:
-    st.session_state.comparison_supplier_columns = []
-
-if "comparison_supplier_configs" not in st.session_state:
-    st.session_state.comparison_supplier_configs = []
-
-if "comparison_duplicate_info" not in st.session_state:
-    st.session_state.comparison_duplicate_info = {}
-
-if "comparison_our_file_name" not in st.session_state:
-    st.session_state.comparison_our_file_name = ""
-
-if "comparison_code_filter_active" not in st.session_state:
-    st.session_state.comparison_code_filter_active = False
-
-if "comparison_code_filter_codes" not in st.session_state:
-    st.session_state.comparison_code_filter_codes = []
+for key, default_value in SESSION_DEFAULTS.items():
+    if key not in st.session_state:
+        st.session_state[key] = default_value
 
 
 # =========================================================
 # WEB INTERFACE
 # =========================================================
 
-st.title("Price List Comparison")
-
-st.write(
-    "Compare your fixed **OurPrices** workbook with one or several alternative "
-    "supplier price lists. Each supplier can use SKU, EAN, or combined EAN + SKU "
-    "matching with its own identifier/price columns."
+st.markdown(
+    """
+    <div class="pc-hero">
+        <div class="pc-hero-title">📊 Price List Comparison</div>
+        <div class="pc-hero-subtitle">
+            Compare your current prices with one or many supplier price lists,
+            identify the cheapest offers, and export a complete Excel report.
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
-st.info(
-    "The browser table shows only products where **Realisation Summ > 0** or "
-    "**Net Available Qty > 0**. The downloaded Excel contains **all products** "
-    "from OurPrices."
+st.markdown(
+    """
+    <div class="pc-note">
+        The browser shows products where <b>Realisation Summ &gt; 0</b> or
+        <b>Net Available Qty &gt; 0</b>. The downloaded Excel always contains
+        <b>all OurPrices products</b>.
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
-
-st.warning(
-    "Make sure the supplier price and Our Price use the same basis "
-    "(for example both net prices or both gross prices)."
-)
-
 
 # ---------------------------------------------------------
-# 1. OURPRICES UPLOAD
+# 1. OURPRICES
 # ---------------------------------------------------------
 
-st.subheader("1. Upload OurPrices")
+section_title(1, "Our current price list")
 
-our_file = st.file_uploader(
-    "Our current price list",
-    type=["xlsx", "xlsm", "xls"],
-    key="our_prices_upload",
-)
+with st.container(border=True):
+    left, right = st.columns([2, 1])
 
-if our_file is None:
-    st.caption("Upload OurPrices to continue.")
-    st.stop()
+    with left:
+        our_file = st.file_uploader(
+            "Upload OurPrices",
+            type=["xlsx", "xlsm", "xls"],
+            key="our_prices_upload",
+            help="The fixed OurPrices structure is validated automatically.",
+        )
 
-our_bytes = our_file.getvalue()
+    if our_file is None:
+        with right:
+            st.markdown(
+                '<div class="pc-muted">Upload OurPrices to begin.</div>',
+                unsafe_allow_html=True,
+            )
+        st.stop()
 
-try:
-    our_sheets = get_sheet_names(our_bytes)
-except Exception as exc:
-    st.error(f"Could not open OurPrices: {exc}")
-    st.stop()
+    our_bytes = our_file.getvalue()
 
-our_default_sheet_index = (
-    our_sheets.index("Export") if "Export" in our_sheets else 0
-)
+    try:
+        our_sheets = get_sheet_names(our_bytes)
+    except Exception as exc:
+        st.error(f"Could not open OurPrices: {exc}")
+        st.stop()
 
-our_sheet = st.selectbox(
-    "OurPrices sheet",
-    our_sheets,
-    index=our_default_sheet_index,
-    key="our_prices_sheet",
-)
-
-try:
-    our_df = read_excel_sheet(our_bytes, our_sheet)
-except Exception as exc:
-    st.error(f"Could not read OurPrices sheet: {exc}")
-    st.stop()
-
-missing_columns = [
-    col for col in REQUIRED_OUR_COLUMNS if col not in our_df.columns
-]
-
-if missing_columns:
-    st.error(
-        "OurPrices is missing required columns: "
-        + ", ".join(missing_columns)
+    our_default_sheet_index = (
+        our_sheets.index("Export") if "Export" in our_sheets else 0
     )
-    st.write("Columns found:", list(our_df.columns))
-    st.stop()
 
-st.success(f"OurPrices validated: {len(our_df):,} rows loaded.")
+    with right:
+        our_sheet = st.selectbox(
+            "Sheet",
+            our_sheets,
+            index=our_default_sheet_index,
+            key="our_prices_sheet",
+        )
+
+    try:
+        our_df = read_excel_sheet(our_bytes, our_sheet)
+    except Exception as exc:
+        st.error(f"Could not read OurPrices sheet: {exc}")
+        st.stop()
+
+    missing_columns = [
+        col for col in REQUIRED_OUR_COLUMNS if col not in our_df.columns
+    ]
+
+    if missing_columns:
+        st.error(
+            "OurPrices is missing required columns: "
+            + ", ".join(missing_columns)
+        )
+        st.write("Columns found:", list(our_df.columns))
+        st.stop()
+
+    st.success(f"OurPrices validated · {len(our_df):,} rows")
 
 
 # ---------------------------------------------------------
-# 2. SUPPLIER MODE
+# 2. SUPPLIERS
 # ---------------------------------------------------------
 
-st.subheader("2. Alternative suppliers")
+section_title(2, "Alternative suppliers")
 
-upload_mode = st.radio(
-    "Upload mode",
-    ["Single supplier", "Bulk suppliers"],
-    horizontal=True,
-    key="supplier_upload_mode",
-)
+with st.container(border=True):
+    mode_col, info_col = st.columns([1.2, 2])
 
-if upload_mode == "Single supplier":
-    single_file = st.file_uploader(
-        "Upload alternative supplier price list",
-        type=["xlsx", "xlsm", "xls"],
-        key="single_supplier_upload",
-    )
-    supplier_files = [single_file] if single_file is not None else []
-else:
-    supplier_files = st.file_uploader(
-        "Upload alternative supplier price lists",
-        type=["xlsx", "xlsm", "xls"],
-        accept_multiple_files=True,
-        key="bulk_supplier_upload",
-    )
+    with mode_col:
+        upload_mode = st.radio(
+            "Upload mode",
+            ["Single supplier", "Bulk suppliers"],
+            horizontal=True,
+            key="supplier_upload_mode",
+        )
+
+    with info_col:
+        st.caption(
+            "Each supplier can match by SKU, EAN, or EAN + SKU. "
+            "Combined matching always tries EAN first and then SKU."
+        )
+
+    if upload_mode == "Single supplier":
+        single_file = st.file_uploader(
+            "Alternative supplier price list",
+            type=["xlsx", "xlsm", "xls"],
+            key="single_supplier_upload",
+        )
+        supplier_files = [single_file] if single_file is not None else []
+    else:
+        supplier_files = st.file_uploader(
+            "Alternative supplier price lists",
+            type=["xlsx", "xlsm", "xls"],
+            accept_multiple_files=True,
+            key="bulk_supplier_upload",
+        )
 
 if not supplier_files:
     st.caption("Upload at least one alternative supplier price list to continue.")
@@ -1082,10 +1326,10 @@ if not supplier_files:
 
 
 # ---------------------------------------------------------
-# 3. CONFIGURE EACH SUPPLIER
+# 3. CONFIGURE SUPPLIERS
 # ---------------------------------------------------------
 
-st.subheader("3. Configure supplier mapping")
+section_title(3, "Supplier mapping")
 
 supplier_configs = []
 configuration_errors = []
@@ -1105,26 +1349,27 @@ for index, supplier_file in enumerate(supplier_files, start=1):
         continue
 
     with st.expander(
-        f"Supplier {index}: {supplier_file.name}",
-        expanded=True,
+        f"{index}. {supplier_file.name}",
+        expanded=(len(supplier_files) <= 3),
     ):
-        supplier_name = st.text_input(
-            "Supplier name",
-            value=default_name,
-            key=f"{base_key}_name",
-            help=(
-                "This name will be used in the result columns, for example "
-                "'Schneider Price', and in the Cheapest Supplier field."
-            ),
-        ).strip()
+        top1, top2 = st.columns([1.3, 1])
+
+        with top1:
+            supplier_name = st.text_input(
+                "Supplier name",
+                value=default_name,
+                key=f"{base_key}_name",
+                help="Used in result columns and in Cheapest Supplier.",
+            ).strip()
 
         entered_supplier_names.append(supplier_name)
 
-        sheet_name = st.selectbox(
-            "Excel sheet",
-            supplier_sheets,
-            key=f"{base_key}_sheet",
-        )
+        with top2:
+            sheet_name = st.selectbox(
+                "Excel sheet",
+                supplier_sheets,
+                key=f"{base_key}_sheet",
+            )
 
         try:
             supplier_df = read_excel_sheet(file_bytes, sheet_name)
@@ -1142,18 +1387,22 @@ for index, supplier_file in enumerate(supplier_files, start=1):
 
         supplier_columns = list(supplier_df.columns)
 
+        st.markdown("**Matching**")
         match_method = st.radio(
-            "Match this supplier using",
+            "Match using",
             ["SKU", "EAN", "EAN + SKU"],
             horizontal=True,
             key=f"{base_key}_match",
             help=(
-                "EAN + SKU tries EAN first. If the EAN is missing or not found "
-                "at this supplier, the app then tries SKU."
+                "EAN + SKU: EAN is tried first. "
+                "SKU is only used when EAN does not match."
             ),
+            label_visibility="collapsed",
         )
 
         price_guess = guess_column(supplier_columns, "PRICE")
+        ean_column = None
+        sku_column = None
 
         if match_method == "EAN + SKU":
             ean_guess = guess_column(supplier_columns, "EAN")
@@ -1163,7 +1412,7 @@ for index, supplier_file in enumerate(supplier_files, start=1):
 
             with col1:
                 ean_column = st.selectbox(
-                    "Column corresponding to EAN",
+                    "EAN column",
                     supplier_columns,
                     index=supplier_columns.index(ean_guess),
                     key=f"{base_key}_ean_col",
@@ -1171,7 +1420,7 @@ for index, supplier_file in enumerate(supplier_files, start=1):
 
             with col2:
                 sku_column = st.selectbox(
-                    "Column corresponding to SKU",
+                    "SKU column",
                     supplier_columns,
                     index=supplier_columns.index(sku_guess),
                     key=f"{base_key}_sku_col",
@@ -1186,14 +1435,15 @@ for index, supplier_file in enumerate(supplier_files, start=1):
                 )
 
             if ean_column == sku_column:
-                st.warning(
-                    "EAN and SKU columns are the same. Check this supplier mapping."
+                configuration_errors.append(
+                    f"{supplier_name or supplier_file.name}: "
+                    "EAN and SKU columns cannot be the same."
                 )
 
             if price_column in (ean_column, sku_column):
-                st.warning(
-                    "Price column is also selected as an identifier column. "
-                    "Check this supplier mapping."
+                configuration_errors.append(
+                    f"{supplier_name or supplier_file.name}: "
+                    "Price column cannot also be an identifier column."
                 )
 
         elif match_method == "EAN":
@@ -1203,7 +1453,7 @@ for index, supplier_file in enumerate(supplier_files, start=1):
 
             with col1:
                 ean_column = st.selectbox(
-                    "Column corresponding to EAN",
+                    "EAN column",
                     supplier_columns,
                     index=supplier_columns.index(ean_guess),
                     key=f"{base_key}_ean_col",
@@ -1217,11 +1467,10 @@ for index, supplier_file in enumerate(supplier_files, start=1):
                     key=f"{base_key}_price_col_ean",
                 )
 
-            sku_column = None
-
             if ean_column == price_column:
-                st.warning(
-                    "Identifier and price columns are the same. Check this supplier mapping."
+                configuration_errors.append(
+                    f"{supplier_name or supplier_file.name}: "
+                    "EAN and Price columns cannot be the same."
                 )
 
         else:
@@ -1231,7 +1480,7 @@ for index, supplier_file in enumerate(supplier_files, start=1):
 
             with col1:
                 sku_column = st.selectbox(
-                    "Column corresponding to SKU",
+                    "SKU column",
                     supplier_columns,
                     index=supplier_columns.index(sku_guess),
                     key=f"{base_key}_sku_col",
@@ -1245,18 +1494,34 @@ for index, supplier_file in enumerate(supplier_files, start=1):
                     key=f"{base_key}_price_col_sku",
                 )
 
-            ean_column = None
-
             if sku_column == price_column:
-                st.warning(
-                    "Identifier and price columns are the same. Check this supplier mapping."
+                configuration_errors.append(
+                    f"{supplier_name or supplier_file.name}: "
+                    "SKU and Price columns cannot be the same."
                 )
 
-        with st.expander("Preview this supplier file"):
-            st.dataframe(
-                supplier_df.head(15),
-                use_container_width=True,
-                hide_index=True,
+        preview_col, stat_col = st.columns([3, 1])
+
+        with preview_col:
+            with st.expander("Preview first 10 rows"):
+                st.dataframe(
+                    supplier_df.head(10),
+                    use_container_width=True,
+                    hide_index=True,
+                    height=300,
+                )
+
+        with stat_col:
+            valid_price_count = int(
+                parse_numeric_series(supplier_df[price_column]).notna().sum()
+            )
+            st.metric("Rows", f"{len(supplier_df):,}")
+            st.metric("Valid prices", f"{valid_price_count:,}")
+
+        if valid_price_count == 0:
+            configuration_errors.append(
+                f"{supplier_name or supplier_file.name}: "
+                "no valid numeric prices were found in the selected Price column."
             )
 
         if not supplier_name:
@@ -1268,6 +1533,7 @@ for index, supplier_file in enumerate(supplier_files, start=1):
             {
                 "supplier_name": supplier_name,
                 "file_name": supplier_file.name,
+                "file_digest": file_digest(file_bytes),
                 "sheet_name": sheet_name,
                 "match_method": match_method,
                 "ean_column": ean_column,
@@ -1278,46 +1544,80 @@ for index, supplier_file in enumerate(supplier_files, start=1):
         )
 
 
-# Supplier names must be unique because they become Excel/result column names.
-non_empty_names = [name for name in entered_supplier_names if name]
+# Case-insensitive duplicate-name check.
+non_empty_names = [name.casefold() for name in entered_supplier_names if name]
 if len(non_empty_names) != len(set(non_empty_names)):
     configuration_errors.append(
-        "Supplier names must be unique. Two uploaded files currently use the same supplier name."
+        "Supplier names must be unique (case-insensitive)."
     )
 
 if configuration_errors:
-    for error in configuration_errors:
+    # Deduplicate identical messages created by rerun combinations.
+    for error in dict.fromkeys(configuration_errors):
         st.error(error)
 
 
 # ---------------------------------------------------------
-# 4. RUN COMPARISON
+# 4. COMPARE
 # ---------------------------------------------------------
 
-st.subheader("4. Compare")
+section_title(4, "Run comparison")
 
 compare_disabled = bool(configuration_errors) or not supplier_configs
+current_signature = comparison_signature(
+    our_bytes,
+    our_sheet,
+    supplier_configs,
+)
 
-if st.button(
-    "Compare prices",
-    type="primary",
-    use_container_width=True,
-    disabled=compare_disabled,
-):
-    try:
-        comparison_result, supplier_price_columns, duplicate_info = (
-            compare_all_suppliers(
-                our_df,
-                supplier_configs,
-            )
+with st.container(border=True):
+    action_col, note_col = st.columns([1, 2])
+
+    with action_col:
+        compare_clicked = st.button(
+            "Compare prices",
+            type="primary",
+            use_container_width=True,
+            disabled=compare_disabled,
         )
 
-        # Persist the result so changing Display controls does NOT erase it.
+    with note_col:
+        st.caption(
+            "The result is stored in the browser session. "
+            "Changing display filters will not rerun the comparison."
+        )
+
+if compare_clicked:
+    try:
+        with st.spinner("Comparing suppliers and preparing Excel..."):
+            comparison_result, supplier_price_columns, duplicate_info = (
+                compare_all_suppliers(
+                    our_df,
+                    supplier_configs,
+                )
+            )
+
+            saved_configs = lightweight_supplier_configs(supplier_configs)
+            ean_lookup, sku_lookup = build_code_lookups(comparison_result)
+
+            # Generate the workbook once. Radio/filter changes reuse these bytes.
+            excel_bytes = create_excel(
+                full_result=comparison_result,
+                supplier_price_columns=supplier_price_columns,
+                supplier_configs=saved_configs,
+                duplicate_info=duplicate_info,
+                our_file_name=our_file.name,
+            )
+
         st.session_state.comparison_result = comparison_result
         st.session_state.comparison_supplier_columns = supplier_price_columns
-        st.session_state.comparison_supplier_configs = supplier_configs
+        st.session_state.comparison_supplier_configs = saved_configs
         st.session_state.comparison_duplicate_info = duplicate_info
         st.session_state.comparison_our_file_name = our_file.name
+        st.session_state.comparison_signature = current_signature
+        st.session_state.comparison_excel_bytes = excel_bytes
+        st.session_state.comparison_ean_lookup = ean_lookup
+        st.session_state.comparison_sku_lookup = sku_lookup
         st.session_state.comparison_code_filter_active = False
         st.session_state.comparison_code_filter_codes = []
 
@@ -1328,20 +1628,27 @@ if st.button(
 
 
 # =========================================================
-# RESULTS - RENDER FROM SESSION STATE
+# 5. RESULTS
 # =========================================================
 
 full_result = st.session_state.comparison_result
 
 if full_result is not None:
+    # Prevent stale results from being presented after a file/mapping change.
+    if st.session_state.comparison_signature != current_signature:
+        st.warning(
+            "Files or supplier mapping settings changed after the last comparison. "
+            "Click **Compare prices** again to refresh the results."
+        )
+        st.stop()
+
     supplier_price_columns = st.session_state.comparison_supplier_columns
     saved_supplier_configs = st.session_state.comparison_supplier_configs
     duplicate_info = st.session_state.comparison_duplicate_info
 
     st.divider()
-    st.subheader("5. Comparison results")
+    section_title(5, "Comparison results")
 
-    # Browser display is intentionally limited to active/relevant products.
     relevant_result = full_result[
         full_result["_relevant_for_display"]
     ].copy()
@@ -1370,82 +1677,83 @@ if full_result is not None:
     }
 
     if duplicate_suppliers:
-        duplicate_text = "; ".join(
+        duplicate_text = " · ".join(
             f"{supplier}: {count}"
             for supplier, count in duplicate_suppliers.items()
         )
         st.warning(
-            "Duplicated supplier identifiers were found. The lowest valid price "
-            f"was used for each duplicated SKU/EAN. {duplicate_text}"
+            "Duplicate supplier identifiers were found. "
+            "The lowest valid price was used. "
+            + duplicate_text
         )
 
     # -----------------------------------------------------
-    # Manual EAN / SKU code filter
+    # Manual code filter
     # -----------------------------------------------------
 
-    st.markdown("#### Filter by EAN / SKU codes")
+    with st.container(border=True):
+        st.markdown("#### Quick code filter")
+        st.caption(
+            "Paste EANs, SKUs, or a mix — one per line. "
+            "Results follow the pasted order and search all compared OurPrices rows."
+        )
 
-    st.caption(
-        "Paste one code per line. You can mix EANs and SKUs. "
-        "The filtered result follows exactly the order you pasted. "
-        "Manual code lookup searches all compared OurPrices products, including "
-        "products normally hidden by the Realisation/Available browser filter."
-    )
+        st.text_area(
+            "Codes",
+            height=135,
+            placeholder=(
+                "3606486365540\n"
+                "3606486365588\n"
+                "A9R35240\n"
+                "3606480089459"
+            ),
+            key="comparison_code_filter_input",
+            label_visibility="collapsed",
+        )
 
-    st.text_area(
-        "Codes",
-        height=160,
-        placeholder=(
-            "3606486365540\n"
-            "3606486365588\n"
-            "A9R35240\n"
-            "3606480089459"
-        ),
-        key="comparison_code_filter_input",
-    )
+        filter_col, clear_col, spacer_col = st.columns([1, 1, 3])
 
-    filter_col, clear_col = st.columns([1, 1])
+        with filter_col:
+            if st.button(
+                "Apply code filter",
+                type="primary",
+                use_container_width=True,
+                key="comparison_code_filter_button",
+            ):
+                requested_codes = parse_requested_codes(
+                    st.session_state.get("comparison_code_filter_input", "")
+                )
 
-    with filter_col:
-        if st.button(
-            "Filter",
-            type="primary",
-            use_container_width=True,
-            key="comparison_code_filter_button",
-        ):
-            requested_codes = parse_requested_codes(
-                st.session_state.get("comparison_code_filter_input", "")
-            )
+                if requested_codes:
+                    st.session_state.comparison_code_filter_codes = requested_codes
+                    st.session_state.comparison_code_filter_active = True
+                else:
+                    st.warning("Paste at least one EAN or SKU first.")
 
-            if requested_codes:
-                st.session_state.comparison_code_filter_codes = requested_codes
-                st.session_state.comparison_code_filter_active = True
-            else:
-                st.warning("Paste at least one EAN or SKU before clicking Filter.")
-
-    with clear_col:
-        if st.button(
-            "Clear code filter",
-            use_container_width=True,
-            key="comparison_code_filter_clear",
-        ):
-            st.session_state.comparison_code_filter_active = False
-            st.session_state.comparison_code_filter_codes = []
+        with clear_col:
+            if st.button(
+                "Clear filter",
+                use_container_width=True,
+                key="comparison_code_filter_clear",
+            ):
+                st.session_state.comparison_code_filter_active = False
+                st.session_state.comparison_code_filter_codes = []
 
     manual_filter_active = st.session_state.comparison_code_filter_active
     requested_codes = st.session_state.comparison_code_filter_codes
 
     # -----------------------------------------------------
-    # Normal Display filter
+    # Display filter
     # -----------------------------------------------------
 
     if manual_filter_active and requested_codes:
         shown = filter_result_by_codes(
             full_result,
             requested_codes,
+            st.session_state.comparison_ean_lookup,
+            st.session_state.comparison_sku_lookup,
         )
 
-        # Internal helper column is never shown to the user.
         if "_relevant_for_display" in shown.columns:
             shown = shown.drop(columns=["_relevant_for_display"])
 
@@ -1454,8 +1762,8 @@ if full_result is not None:
         )
 
         st.info(
-            f"Code filter active: showing {len(shown):,} pasted code(s) in pasted order. "
-            f"Code not found: {code_not_found_count:,}."
+            f"Code filter active · {len(shown):,} requested · "
+            f"{code_not_found_count:,} not found"
         )
 
     else:
@@ -1489,12 +1797,10 @@ if full_result is not None:
         else:
             shown = relevant_result.copy()
 
-        # Internal helper column is never shown to the user.
         shown = shown.drop(columns=["_relevant_for_display"])
 
         st.caption(
-            f"Showing {len(shown):,} of {len(relevant_result):,} relevant products. "
-            "All uploaded supplier price columns remain visible."
+            f"Showing {len(shown):,} of {len(relevant_result):,} relevant products."
         )
 
     st.dataframe(
@@ -1505,34 +1811,29 @@ if full_result is not None:
     )
 
     # -----------------------------------------------------
-    # Download ALL products
+    # Download
     # -----------------------------------------------------
 
-    excel_bytes = create_excel(
-        full_result=full_result,
-        supplier_price_columns=supplier_price_columns,
-        supplier_configs=saved_supplier_configs,
-        duplicate_info=duplicate_info,
-        our_file_name=st.session_state.comparison_our_file_name,
-    )
+    with st.container(border=True):
+        download_col, info_col = st.columns([1.2, 2])
 
-    st.download_button(
-        "Download full comparison Excel",
-        data=excel_bytes,
-        file_name=(
-            f"Price_Comparison_{datetime.now():%Y-%m-%d_%H-%M}.xlsx"
-        ),
-        mime=(
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        ),
-        type="primary",
-        use_container_width=True,
-        help=(
-            "The downloaded workbook contains ALL products from OurPrices, "
-            "including products hidden from the browser by the Realisation/Available filter."
-        ),
-    )
+        with download_col:
+            st.download_button(
+                "Download full comparison Excel",
+                data=st.session_state.comparison_excel_bytes,
+                file_name=(
+                    f"Price_Comparison_{datetime.now():%Y-%m-%d_%H-%M}.xlsx"
+                ),
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+                type="primary",
+                use_container_width=True,
+            )
 
-    st.caption(
-        f"Excel export contains all {len(full_result):,} OurPrices products."
-    )
+        with info_col:
+            st.caption(
+                f"Excel contains all {len(full_result):,} OurPrices products, "
+                "including rows hidden by the browser relevance filter."
+            )
