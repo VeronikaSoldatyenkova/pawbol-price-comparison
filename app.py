@@ -106,7 +106,6 @@ st.markdown(
         div[data-testid="stExpander"] {
             border: 1px solid var(--pc-border);
             border-radius: 12px;
-            overflow: hidden;
         }
 
         div[data-testid="stFileUploader"] {
@@ -1655,12 +1654,22 @@ for index, supplier_file in enumerate(supplier_files, start=1):
         preview_col, stat_col = st.columns([3, 1])
 
         with preview_col:
-            with st.expander("Preview first 10 rows"):
+            show_preview = st.checkbox(
+                "Show first 10 rows",
+                value=False,
+                key=f"{base_key}_show_preview",
+                help=(
+                    "Preview is hidden by default to keep supplier configuration compact "
+                    "and avoid nested scrollable containers."
+                ),
+            )
+
+            if show_preview:
                 st.dataframe(
                     supplier_df.head(10),
                     use_container_width=True,
                     hide_index=True,
-                    height=300,
+                    height=390,
                 )
 
         with stat_col:
@@ -1785,15 +1794,26 @@ if compare_clicked:
 
 full_result = st.session_state.comparison_result
 
-if full_result is not None:
-    # Prevent stale results from being presented after a file/mapping change.
-    if st.session_state.comparison_signature != current_signature:
-        st.warning(
-            "Files or supplier mapping settings changed after the last comparison. "
-            "Click **Compare prices** again to refresh the results."
-        )
-        st.stop()
+results_are_stale = (
+    full_result is not None
+    and st.session_state.comparison_signature != current_signature
+)
 
+if results_are_stale:
+    # Do not call st.stop() here. st.stop() truncates the page during a widget
+    # rerun and can make the UI look as if scrolling is blocked.
+    st.divider()
+    section_title(5, "Comparison results")
+    st.warning(
+        "Files or supplier mapping settings changed after the last comparison. "
+        "The previous result is hidden. Click **Compare prices** again to refresh it."
+    )
+    st.caption(
+        "You can continue editing supplier settings normally; the page is no longer "
+        "stopped or truncated."
+    )
+
+elif full_result is not None:
     supplier_price_columns = st.session_state.comparison_supplier_columns
     saved_supplier_configs = st.session_state.comparison_supplier_configs
     duplicate_info = st.session_state.comparison_duplicate_info
