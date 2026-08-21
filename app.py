@@ -483,6 +483,10 @@ def compare_all_suppliers(our_df, supplier_configs):
     EAN + SKU rule:
       1. EAN match first.
       2. SKU is used only when the EAN lookup has no supplier price.
+
+    Cheapest Price includes Our Price as well as every matched supplier price.
+    Our Price has tie priority, so if Our Price equals the lowest supplier price,
+    Cheapest Supplier is shown as "Our Price".
     """
     result = prepare_our_prices(our_df)
 
@@ -538,49 +542,63 @@ def compare_all_suppliers(our_df, supplier_configs):
     # Remove internal matching keys before producing the result.
     result = result.drop(columns=["_ean_key", "_sku_key"])
 
+    our_price = pd.to_numeric(result["Our Price"], errors="coerce")
+
     if supplier_price_columns:
         supplier_prices = result[supplier_price_columns].apply(
             pd.to_numeric,
             errors="coerce",
         )
 
-        has_match = supplier_prices.notna().any(axis=1)
-
-        result["Cheapest Alternative Price"] = supplier_prices.min(
-            axis=1,
-            skipna=True,
-        )
-
-        # Vectorized replacement for a row-by-row Python apply.
-        cheapest_cols = pd.Series(pd.NA, index=supplier_prices.index, dtype="object")
-        if has_match.any():
-            cheapest_cols.loc[has_match] = supplier_prices.loc[has_match].idxmin(axis=1)
-
-        cheapest_names = cheapest_cols.astype("string").str.replace(
-            r" Price$",
-            "",
-            regex=True,
-        )
-        result["Cheapest Supplier"] = cheapest_names.where(has_match, "").fillna("")
+        # Keep supplier-only information for the existing matched/status logic.
+        # This remains separate from Cheapest Price because Cheapest Price now
+        # also includes Our Price.
+        cheapest_alternative = supplier_prices.min(axis=1, skipna=True)
         result["Matched Suppliers"] = supplier_prices.notna().sum(axis=1).astype(int)
 
+        # Our Price is intentionally first so it wins an exact-price tie.
+        all_prices = pd.concat(
+            [our_price.rename("Our Price"), supplier_prices],
+            axis=1,
+        )
     else:
-        result["Cheapest Alternative Price"] = np.nan
-        result["Cheapest Supplier"] = ""
+        cheapest_alternative = pd.Series(np.nan, index=result.index, dtype=float)
         result["Matched Suppliers"] = 0
+        all_prices = our_price.to_frame(name="Our Price")
 
-    result["Saving €"] = result["Our Price"] - result["Cheapest Alternative Price"]
+    has_any_price = all_prices.notna().any(axis=1)
+
+    result["Cheapest Price"] = all_prices.min(axis=1, skipna=True)
+
+    cheapest_cols = pd.Series(pd.NA, index=result.index, dtype="object")
+    if has_any_price.any():
+        cheapest_cols.loc[has_any_price] = all_prices.loc[has_any_price].idxmin(axis=1)
+
+    # Supplier price columns are named "<Supplier> Price". Keep "Our Price"
+    # unchanged while stripping the suffix from supplier names.
+    cheapest_names = cheapest_cols.astype("string")
+    supplier_name_mask = cheapest_names.notna() & cheapest_names.ne("Our Price")
+    cheapest_names.loc[supplier_name_mask] = cheapest_names.loc[
+        supplier_name_mask
+    ].str.replace(r" Price$", "", regex=True)
+
+    result["Cheapest Supplier"] = cheapest_names.where(has_any_price, "").fillna("")
+
+    # Savings are now against the cheapest price overall. If Our Price is
+    # already the lowest price, Saving € and Saving % are zero.
+    result["Saving €"] = our_price - result["Cheapest Price"]
 
     result["Saving %"] = np.where(
-        result["Our Price"].notna() & result["Our Price"].ne(0),
-        result["Saving €"] / result["Our Price"],
+        our_price.notna() & our_price.ne(0),
+        result["Saving €"] / our_price,
         np.nan,
     )
 
-    alt = result["Cheapest Alternative Price"]
-    our = result["Our Price"]
+    # Status keeps its original supplier-comparison meaning so filters such as
+    # "Only supplier cheaper" continue to work correctly.
+    alt = cheapest_alternative
+    our = our_price
 
-    # Vectorized status calculation.
     result["Status"] = np.select(
         [
             alt.isna(),
@@ -601,7 +619,7 @@ def compare_all_suppliers(our_df, supplier_configs):
         ["EAN", "SKU", "Our Price"]
         + supplier_price_columns
         + [
-            "Cheapest Alternative Price",
+            "Cheapest Price",
             "Cheapest Supplier",
             "Saving €",
             "Saving %",
@@ -640,7 +658,6 @@ def compare_all_suppliers(our_df, supplier_configs):
     )
 
     return result, supplier_price_columns, duplicate_info
-
 
 def parse_requested_codes(text):
     """
@@ -880,7 +897,7 @@ def create_excel(
         ("Relevant products shown in browser", int(relevant_mask.sum())),
         (
             "Products matched with at least one supplier",
-            int(full_result["Cheapest Alternative Price"].notna().sum()),
+            int(full_result["Matched Suppliers"].gt(0).sum()),
         ),
         (
             "Products where at least one supplier is cheaper",
@@ -1031,7 +1048,7 @@ def create_excel(
             "EAN": 17,
             "SKU": 22,
             "Our Price": 14,
-            "Cheapest Alternative Price": 23,
+            "Cheapest Price": 23,
             "Cheapest Supplier": 22,
             "Saving €": 13,
             "Saving %": 12,
@@ -1060,7 +1077,7 @@ def create_excel(
         money_columns = [
             "Our Price",
             *supplier_price_columns,
-            "Cheapest Alternative Price",
+            "Cheapest Price",
             "Saving €",
         ]
 
@@ -1126,7 +1143,7 @@ def create_excel(
                     },
                 )
 
-            cheapest_price_idx = positions["Cheapest Alternative Price"]
+            cheapest_price_idx = positions["Cheapest Price"]
             cheapest_supplier_idx = positions["Cheapest Supplier"]
 
             worksheet.conditional_format(
@@ -1181,78 +1198,79 @@ def style_browser_table(df, supplier_price_columns):
     """
     Light table styling.
 
-    In Quick code filter mode:
+    Normal comparison mode:
+      - Supplier prices below Our Price are highlighted green.
+      - Cheapest Price and Cheapest Supplier are highlighted yellow.
+
+    Quick code filter rows with a valid Target Price:
       - Target Price is highlighted in soft blue.
-      - Our Price below Target Price is highlighted blue.
-      - Supplier prices below Target Price get a stronger teal highlight.
-      - Below Target is highlighted green when at least one price meets the target.
+      - Every price below Target Price uses the same blue palette.
+      - Green "cheaper than Our Price" and yellow "cheapest" highlights are
+        intentionally suppressed so target performance is the only price signal.
     """
+    target_blue = "background-color: #e0f2fe; color: #075985; font-weight: 800;"
+
     def style_row(row):
         styles = pd.Series("", index=row.index, dtype=object)
 
+        target_price = row.get("Target Price", np.nan)
+        has_target = pd.notna(target_price)
+
         if row.get("Lookup Status", "") == "CODE NOT FOUND":
             styles[:] = "background-color: #f1f5f9; color: #475569;"
-            if "Target Price" in styles.index and pd.notna(row.get("Target Price", np.nan)):
-                styles["Target Price"] = (
-                    "background-color: #e0f2fe; color: #075985; font-weight: 700;"
-                )
+            if "Target Price" in styles.index and has_target:
+                styles["Target Price"] = target_blue
             return styles
 
         our_price = row.get("Our Price", np.nan)
-        target_price = row.get("Target Price", np.nan)
-        cheapest_price = row.get("Cheapest Alternative Price", np.nan)
+        cheapest_price = row.get("Cheapest Price", np.nan)
         cheapest_supplier = row.get("Cheapest Supplier", "")
 
-        if "Target Price" in styles.index and pd.notna(target_price):
-            styles["Target Price"] = (
-                "background-color: #e0f2fe; color: #075985; font-weight: 700;"
-            )
+        # -------------------------------------------------
+        # Target mode: blue only
+        # -------------------------------------------------
+        if has_target:
+            if "Target Price" in styles.index:
+                styles["Target Price"] = target_blue
 
-        # Our current price also participates in the target comparison.
-        # Use blue so it is visually distinct from supplier target hits.
-        if (
-            "Our Price" in styles.index
-            and pd.notna(target_price)
-            and pd.notna(our_price)
-            and float(our_price) < float(target_price)
-        ):
-            styles["Our Price"] = (
-                "background-color: #dbeafe; "
-                "color: #1d4ed8; font-weight: 800;"
-            )
+            price_columns = ["Our Price", *supplier_price_columns, "Cheapest Price"]
+            for col in price_columns:
+                if col not in styles.index:
+                    continue
 
+                value = row.get(col, np.nan)
+                if pd.notna(value) and float(value) < float(target_price):
+                    styles[col] = target_blue
+
+            below_target = row.get("Below Target", "")
+            if (
+                "Below Target" in styles.index
+                and pd.notna(below_target)
+                and str(below_target).strip()
+            ):
+                styles["Below Target"] = target_blue
+
+            # Do not add green/yellow comparison highlights to target rows.
+            return styles
+
+        # -------------------------------------------------
+        # Normal comparison mode
+        # -------------------------------------------------
         for col in supplier_price_columns:
             supplier_price = row.get(col, np.nan)
-
-            # Target is the stronger signal in Quick code filter mode.
             if (
-                pd.notna(target_price)
-                and pd.notna(supplier_price)
-                and supplier_price < target_price
-            ):
-                styles[col] = (
-                    "background-color: #ccfbf1; "
-                    "color: #115e59; font-weight: 800;"
-                )
-            elif (
                 pd.notna(supplier_price)
                 and pd.notna(our_price)
-                and supplier_price < our_price
+                and float(supplier_price) < float(our_price)
             ):
                 styles[col] = (
                     "background-color: #dcfce7; "
                     "color: #166534; font-weight: 600;"
                 )
 
-        below_target = str(row.get("Below Target", "") or "").strip()
-        if "Below Target" in styles.index and below_target:
-            styles["Below Target"] = (
-                "background-color: #dcfce7; color: #166534; font-weight: 700;"
-            )
-
         if pd.notna(cheapest_price):
-            if "Cheapest Alternative Price" in styles.index:
-                styles["Cheapest Alternative Price"] = (
+            if "Cheapest Price" in styles.index:
+                styles["Cheapest Price"] = (
                     "background-color: #fef3c7; "
                     "color: #92400e; font-weight: 700;"
                 )
@@ -1268,7 +1286,7 @@ def style_browser_table(df, supplier_price_columns):
     formatters = {
         "Our Price": "€{:.2f}",
         "Target Price": "€{:.2f}",
-        "Cheapest Alternative Price": "€{:.2f}",
+        "Cheapest Price": "€{:.2f}",
         "Saving €": "€{:.2f}",
         "Saving %": "{:.2%}",
         "Realisation Summ": "{:.2f}",
@@ -1284,7 +1302,6 @@ def style_browser_table(df, supplier_price_columns):
     }
 
     return df.style.apply(style_row, axis=1).format(formatters, na_rep="")
-
 
 def reset_comparison_state():
     st.session_state.comparison_result = None
@@ -1789,7 +1806,7 @@ if full_result is not None:
     ].copy()
 
     relevant_matched = int(
-        relevant_result["Cheapest Alternative Price"].notna().sum()
+        relevant_result["Matched Suppliers"].gt(0).sum()
     )
     relevant_cheaper = int((relevant_result["Status"] == "CHEAPER").sum())
     relevant_more_expensive = int(
@@ -1957,12 +1974,12 @@ if full_result is not None:
 
         elif display_option == "Only matched":
             shown = relevant_result[
-                relevant_result["Cheapest Alternative Price"].notna()
+                relevant_result["Matched Suppliers"].gt(0)
             ].copy()
 
         elif display_option == "Only not found":
             shown = relevant_result[
-                relevant_result["Cheapest Alternative Price"].isna()
+                relevant_result["Matched Suppliers"].eq(0)
             ].copy()
 
         else:
