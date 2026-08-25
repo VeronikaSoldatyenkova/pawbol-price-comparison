@@ -7,7 +7,7 @@ from price_compare_compare import (
     lightweight_supplier_configs,
 )
 from price_compare_export import create_excel
-from price_compare_inputs_v2 import render_current_pricelist, render_supplier_inputs
+from price_compare_inputs_v3 import render_current_pricelist, render_supplier_inputs
 from price_compare_results import render_results
 from price_compare_theme import configure_theme, render_hero, section_title
 
@@ -32,12 +32,14 @@ def initialize_state():
             st.session_state[key] = default_value
 
 
-def run_app():
-    configure_theme()
+def _run_main_ui():
     initialize_state()
     render_hero()
 
     our = render_current_pricelist()
+    if our is None:
+        return
+
     supplier_configs, configuration_errors = render_supplier_inputs(our["errors"])
 
     section_title(4, "Run comparison")
@@ -113,9 +115,26 @@ def run_app():
 
             st.success("Comparison completed.")
         except Exception as exc:
+            st.error("Comparison failed. The page is still usable; see details below.")
             st.exception(exc)
 
     render_results(current_signature)
+
+
+def run_app():
+    # Configure the page before any other Streamlit output.
+    configure_theme()
+
+    # A Python-side input/render exception must never leave the user with a blank page.
+    # Streamlit will render the exception block instead of terminating the whole UI.
+    try:
+        _run_main_ui()
+    except Exception as exc:
+        st.error(
+            "The interface encountered an unexpected error while rendering. "
+            "The app did not intentionally stop; reload is not required to see the error."
+        )
+        st.exception(exc)
 
 
 run_app()
