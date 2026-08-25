@@ -14,6 +14,7 @@ apply_powerbi_purchase_fields()
 
 from core import (
     POWERBI_REQUIRED_COLUMNS,
+    POWERBI_OUTPUT_COLUMNS,
     build_code_lookups,
     compare_all,
     create_excel,
@@ -58,6 +59,12 @@ assert LAST_PURCHASE_PRICE in result.columns
 assert LAST_PURCHASE_DATE in result.columns
 assert abs(float(result.iloc[0][LAST_PURCHASE_PRICE]) - 14.408) < 1e-9
 assert pd.api.types.is_datetime64_any_dtype(result[LAST_PURCHASE_DATE])
+
+# PowerBI layout regression: all price/comparison columns must stay together.
+assert result.columns.get_loc("Test Supplier Price") == result.columns.get_loc("Our Price") + 1
+assert result.columns.get_loc("Cheapest Price") == result.columns.get_loc("Test Supplier Price") + 1
+visible_columns = [c for c in result.columns if c != "_relevant_for_display"]
+assert visible_columns[-len(POWERBI_OUTPUT_COLUMNS):] == POWERBI_OUTPUT_COLUMNS
 
 web_model = dataframe_to_table_model(result, supplier_cols)
 price_idx = web_model["columns"].index(LAST_PURCHASE_PRICE)
