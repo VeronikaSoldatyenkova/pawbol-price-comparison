@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
+<style>
+.comparison-progress-card{border:1px solid #e2e8f0;border-radius:16px;padding:22px;background:#fff;margin:18px 0;box-shadow:0 8px 26px rgba(15,23,42,.05)}
+.comparison-progress-top{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;margin-bottom:15px}.comparison-progress-top>strong{font-size:22px;color:#0f766e}
+.comparison-progress-track{height:12px;border-radius:999px;background:#e2e8f0;overflow:hidden}.comparison-progress-bar{height:100%;border-radius:inherit;background:linear-gradient(90deg,#0f766e,#14b8a6);transition:width .35s ease}
+</style>
 <section class="card page-card">
   <div class="section-header">
     <div>
