@@ -66,7 +66,7 @@
         <div class="role-field role-price"><div class="role-label"><span class="role-icon">€</span><label class="label">Price column</label></div><select class="select js-column" name="supplier_{{ idx }}_price" data-role="price" data-file-type="supplier" data-index="{{ idx }}"></select></div>
       </div>
 
-      <p class="help method-help">For <strong>EAN + SKU</strong>, EAN is tried first and SKU is used only as a fallback.</p>
+      <p class="help method-help">For <strong>EAN + SKU</strong>, EAN is tried first and SKU is used only as a fallback. Columns without an Excel header are shown as <strong>Column1, Column2, …</strong> and can be selected normally.</p>
       <div class="preview-panel" id="preview-supplier-{{ idx }}" hidden><div class="preview-toolbar"><div><strong>Sheet preview</strong><span class="preview-summary"></span></div><span class="preview-limit">10 rows · up to 30 columns</span></div><div class="preview-content"></div></div>
     </article>
     {% endfor %}
@@ -80,8 +80,13 @@
 <script>
 const META = {{ metadata_json|safe }};
 const WORKSPACE_ID = {{ workspace_id|tojson }};
+const AUTHORITATIVE_COLUMNS = new Map();
+
+function groupKey(fileType,index,sheetName){return `${fileType}:${index}:${sheetName}`;}
 
 function columnsFor(fileType,index,sheetName){
+  const key=groupKey(fileType,index,sheetName);
+  if(AUTHORITATIVE_COLUMNS.has(key))return AUTHORITATIVE_COLUMNS.get(key);
   const metadata=fileType==='current'?META.current:META.suppliers[Number(index)];
   const sheet=metadata.sheets.find(s=>s.name===sheetName);
   return sheet?sheet.columns:[];
@@ -90,17 +95,19 @@ function columnsFor(fileType,index,sheetName){
 function guess(columns,role){
   if(!columns.length)return '';
   const lowered=columns.map(c=>[String(c).toLowerCase().trim(),c]);
-  const words=role==='ean'?['ean','gtin','barcode']:role==='sku'?['sku','article','item no','item number','product code','material']:['latest pricelist value','salesprice','sales price','net price','purchase price','unit price','supplier price','price','cost'];
+  const words=role==='ean'?['ean','gtin','barcode','code']:role==='sku'?['sku','article','item no','item number','product code','material','code']:['latest pricelist value','salesprice','sales price','net price','purchase price','unit price','supplier price','price','cost'];
   for(const word of words){const exact=lowered.find(([low])=>low===word);if(exact)return exact[1];}
   for(const word of words){const partial=lowered.find(([low])=>low.includes(word));if(partial)return partial[1];}
   return columns[0];
 }
 
+function optionLabel(col){return /^Column\d+$/.test(String(col))?`${col} (unnamed in Excel)`:String(col);}
+
 function fillSelect(select,columns){
   const old=select.value,optional=select.dataset.optional==='true';
   select.innerHTML='';
   if(optional){const blank=document.createElement('option');blank.value='';blank.textContent='— Not selected —';select.appendChild(blank);}
-  for(const col of columns){const option=document.createElement('option');option.value=col;option.textContent=col;select.appendChild(option);}
+  for(const col of columns){const option=document.createElement('option');option.value=col;option.textContent=optionLabel(col);select.appendChild(option);}
   if([...select.options].some(o=>o.value===old))select.value=old;
   else{const g=guess(columns,select.dataset.role);if(g&&[...select.options].some(o=>o.value===g))select.value=g;}
 }
@@ -108,7 +115,15 @@ function fillSelect(select,columns){
 function fillExtras(select,columns){
   const selected=new Set([...select.selectedOptions].map(o=>o.value));
   select.innerHTML='';
-  for(const col of columns){const option=document.createElement('option');option.value=col;option.textContent=col;option.selected=selected.has(col);select.appendChild(option);}
+  for(const col of columns){const option=document.createElement('option');option.value=col;option.textContent=optionLabel(col);option.selected=selected.has(col);select.appendChild(option);}
+}
+
+function applyColumns(fileType,index,sheetName,columns){
+  if(!Array.isArray(columns)||!columns.length)return;
+  const key=groupKey(fileType,index,sheetName);
+  AUTHORITATIVE_COLUMNS.set(key,columns);
+  document.querySelectorAll(`.js-column[data-file-type="${fileType}"][data-index="${index}"]`).forEach(sel=>fillSelect(sel,columns));
+  document.querySelectorAll(`.js-extras[data-file-type="${fileType}"][data-index="${index}"]`).forEach(sel=>fillExtras(sel,columns));
 }
 
 function resetPreview(fileType,index){
@@ -143,13 +158,27 @@ function renderPreviewTable(panel,data){
   const wrap=document.createElement('div');wrap.className='preview-table-wrap';
   const table=document.createElement('table');table.className='preview-table';
   const thead=document.createElement('thead'),headRow=document.createElement('tr');
-  data.columns.forEach(col=>{const th=document.createElement('th');th.textContent=col;headRow.appendChild(th);});
+  data.columns.forEach(col=>{const th=document.createElement('th');th.textContent=optionLabel(col);headRow.appendChild(th);});
   thead.appendChild(headRow);table.appendChild(thead);
   const tbody=document.createElement('tbody');
   data.rows.forEach(row=>{const tr=document.createElement('tr');data.columns.forEach(col=>{const td=document.createElement('td');const value=row[col];td.textContent=value===null||value===undefined?'':String(value);tr.appendChild(td);});tbody.appendChild(tr);});
   table.appendChild(tbody);wrap.appendChild(table);content.appendChild(wrap);
 
   if(data.columns_total>data.columns_shown){const note=document.createElement('div');note.className='preview-footnote';note.textContent=`Preview shows the first ${data.columns_shown} of ${data.columns_total} columns.`;content.appendChild(note);}
+}
+
+async function fetchActualColumns(sheetSelect){
+  const fileType=sheetSelect.dataset.fileType,index=sheetSelect.dataset.index,sheet=sheetSelect.value;
+  if(!sheet)return;
+  try{
+    const params=new URLSearchParams({file_type:fileType,index:String(index),sheet});
+    const response=await fetch(`/preview/${WORKSPACE_ID}?${params.toString()}`);
+    const data=await response.json();
+    if(!response.ok)throw new Error(data.detail||'Could not read sheet columns.');
+    applyColumns(fileType,index,sheet,data.columns);
+  }catch(error){
+    console.warn('Could not refresh full column list:',error);
+  }
 }
 
 async function togglePreview(button){
@@ -170,6 +199,7 @@ async function togglePreview(button){
     const response=await fetch(`/preview/${WORKSPACE_ID}?${params.toString()}`);
     const data=await response.json();
     if(!response.ok)throw new Error(data.detail||'Could not load preview.');
+    applyColumns(fileType,index,sheetSelect.value,data.columns);
     renderPreviewTable(panel,data);
   }catch(error){
     panel.querySelector('.preview-summary').textContent='Preview unavailable';
@@ -180,7 +210,8 @@ async function togglePreview(button){
 
 document.querySelectorAll('.js-sheet').forEach(sel=>{
   refreshGroup(sel);
-  sel.addEventListener('change',()=>{refreshGroup(sel);resetPreview(sel.dataset.fileType,sel.dataset.index);});
+  fetchActualColumns(sel);
+  sel.addEventListener('change',()=>{refreshGroup(sel);resetPreview(sel.dataset.fileType,sel.dataset.index);fetchActualColumns(sel);});
 });
 document.querySelectorAll('.js-method').forEach(sel=>{refreshMethod(sel);sel.addEventListener('change',()=>refreshMethod(sel));});
 document.querySelectorAll('.js-preview-btn').forEach(btn=>btn.addEventListener('click',()=>togglePreview(btn)));
