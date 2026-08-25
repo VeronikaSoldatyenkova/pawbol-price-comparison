@@ -5,9 +5,19 @@
     <div>
       <div class="eyebrow">Step 3 of 3</div>
       <div class="step-heading"><span>3</span><h2>Comparison results</h2></div>
-      <p class="section-copy">Review matches, check target prices and download the complete workbook.</p>
+      <p class="section-copy">Review matches, sort any column, filter specific products and export either the displayed result or the complete comparison.</p>
     </div>
-    <div class="header-actions"><a class="btn btn-primary" href="/download/{{ workspace_id }}">Download Excel</a><a class="btn btn-secondary" href="/configure/{{ workspace_id }}">Edit mapping</a></div>
+    <div class="header-actions">
+      <form action="/download/{{ workspace_id }}/shown" method="post" class="inline-download-form">
+        <input type="hidden" name="view" value="{{ view }}">
+        <textarea name="codes" hidden>{% if quick %}{{ quick_codes_text }}{% endif %}</textarea>
+        <input type="hidden" name="sort_col" value="" class="js-export-sort-col">
+        <input type="hidden" name="sort_dir" value="asc" class="js-export-sort-dir">
+        <button class="btn btn-primary" type="submit">Download displayed table</button>
+      </form>
+      <a class="btn btn-secondary" href="/download/{{ workspace_id }}">Download full comparison</a>
+      <a class="btn btn-secondary" href="/configure/{{ workspace_id }}">Edit mapping</a>
+    </div>
   </div>
 
   <div class="metrics">
@@ -21,9 +31,9 @@
   {% if duplicate_text %}<div class="warning-box">Duplicate supplier identifiers were found; the lowest valid price was used. {{ duplicate_text }}</div>{% endif %}
 
   <div class="quick-card">
-    <div class="quick-intro"><span class="quick-icon">⌕</span><div><h3>Quick code filter</h3><p class="help">Paste EAN/SKU in column 1 and optional Target Price in column 2 directly from Excel.</p></div></div>
+    <div class="quick-intro"><span class="quick-icon">⌕</span><div><h3>Quick code filter</h3><p class="help">Paste EAN/SKU in column 1 and optional Target Price in column 2 directly from Excel. The pasted order is preserved.</p></div></div>
     <form action="/results/{{ workspace_id }}/quick" method="post" class="quick-form">
-      <textarea name="codes" rows="6" placeholder="3606481482679&#9;10&#10;3606480790065&#9;5&#10;A9R35240&#9;12.50"></textarea>
+      <textarea name="codes" rows="6" placeholder="3606481482679&#9;10&#10;3606480790065&#9;5&#10;A9R35240&#9;12.50">{% if quick %}{{ quick_codes_text }}{% endif %}</textarea>
       <div class="actions"><button class="btn btn-primary" type="submit">Apply code filter</button><a class="btn btn-secondary" href="/results/{{ workspace_id }}">Clear filter</a></div>
     </form>
   </div>
@@ -45,9 +55,100 @@
   </nav>
   {% endif %}
 
-  <div class="table-heading"><div><strong>Price comparison</strong><span>{{ "{:,}".format(shown_count) }} row(s)</span></div>{% if table_truncated %}<div class="table-note">Browser preview limited to first {{ max_table_rows }} rows for speed. Excel contains the full result.</div>{% endif %}</div>
-  <div class="table-wrap"><table class="data-table"><thead><tr>{% for col in table.columns %}<th>{{ col }}</th>{% endfor %}</tr></thead><tbody>{% for row in table.rows %}<tr>{% for cell in row %}<td class="{{ cell.class }}">{{ cell.value }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+  <div class="table-heading">
+    <div><strong>Price comparison</strong><span>{{ "{:,}".format(shown_count) }} row(s)</span><span class="sort-help">Click a column header to sort.</span></div>
+    <div class="table-heading-right">
+      <span class="sort-status" id="sort-status">Not sorted</span>
+      {% if table_truncated %}<div class="table-note">Browser preview limited to first {{ max_table_rows }} rows for speed. Displayed-table Excel contains all rows in this filter.</div>{% endif %}
+    </div>
+  </div>
 
-  <div class="actions bottom-actions"><a class="btn btn-primary" href="/download/{{ workspace_id }}">Download full comparison Excel</a><a class="btn btn-secondary" href="/configure/{{ workspace_id }}">Back to mapping</a><a class="btn btn-secondary" href="/">Start new comparison</a></div>
+  <div class="table-wrap">
+    <table class="data-table js-sortable-table" id="comparison-table">
+      <thead><tr>{% for col in table.columns %}<th><button class="table-sort-button" type="button" data-column-index="{{ loop.index0 }}" data-column-name="{{ col }}"><span>{{ col }}</span><span class="sort-indicator">↕</span></button></th>{% endfor %}</tr></thead>
+      <tbody>{% for row in table.rows %}<tr>{% for cell in row %}<td class="{{ cell.class }}">{{ cell.value }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+    </table>
+  </div>
+
+  <div class="download-panel">
+    <div><strong>Export results</strong><p class="help">Displayed table exports the current Quick Filter or selected result tab. Full comparison exports every product from the comparison.</p></div>
+    <div class="actions download-actions">
+      <form action="/download/{{ workspace_id }}/shown" method="post" class="inline-download-form">
+        <input type="hidden" name="view" value="{{ view }}">
+        <textarea name="codes" hidden>{% if quick %}{{ quick_codes_text }}{% endif %}</textarea>
+        <input type="hidden" name="sort_col" value="" class="js-export-sort-col">
+        <input type="hidden" name="sort_dir" value="asc" class="js-export-sort-dir">
+        <button class="btn btn-primary" type="submit">Download displayed table (.xlsx)</button>
+      </form>
+      <a class="btn btn-secondary" href="/download/{{ workspace_id }}">Download full comparison (.xlsx)</a>
+    </div>
+  </div>
+
+  <div class="actions bottom-actions"><a class="btn btn-secondary" href="/configure/{{ workspace_id }}">Back to mapping</a><a class="btn btn-secondary" href="/">Start new comparison</a></div>
 </section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  const table=document.getElementById('comparison-table');
+  if(!table)return;
+  const tbody=table.tBodies[0];
+  const buttons=[...table.querySelectorAll('.table-sort-button')];
+  const status=document.getElementById('sort-status');
+  const sortColInputs=[...document.querySelectorAll('.js-export-sort-col')];
+  const sortDirInputs=[...document.querySelectorAll('.js-export-sort-dir')];
+  let currentColumn=-1;
+  let currentDirection='asc';
+
+  function parseValue(text){
+    const value=String(text??'').trim();
+    if(!value)return {empty:true,type:'text',value:''};
+    const normalized=value.replace(/\u00a0/g,' ').replace(/[€$£%]/g,'').replace(/\s+/g,'').replace(/,/g,'');
+    if(/^-?\d+(?:\.\d+)?$/.test(normalized))return {empty:false,type:'number',value:Number(normalized)};
+    return {empty:false,type:'text',value:value};
+  }
+
+  function compareValues(a,b,direction){
+    if(a.empty&&b.empty)return 0;
+    if(a.empty)return 1;
+    if(b.empty)return -1;
+    let result=0;
+    if(a.type==='number'&&b.type==='number')result=a.value-b.value;
+    else result=String(a.value).localeCompare(String(b.value),undefined,{numeric:true,sensitivity:'base'});
+    return direction==='asc'?result:-result;
+  }
+
+  function updateIndicators(activeButton,direction){
+    buttons.forEach(button=>{
+      button.classList.remove('sorted-asc','sorted-desc');
+      button.querySelector('.sort-indicator').textContent='↕';
+    });
+    activeButton.classList.add(direction==='asc'?'sorted-asc':'sorted-desc');
+    activeButton.querySelector('.sort-indicator').textContent=direction==='asc'?'↑':'↓';
+  }
+
+  function syncExportSort(columnName,direction){
+    sortColInputs.forEach(input=>input.value=columnName);
+    sortDirInputs.forEach(input=>input.value=direction);
+  }
+
+  buttons.forEach(button=>button.addEventListener('click',()=>{
+    const index=Number(button.dataset.columnIndex);
+    const columnName=button.dataset.columnName;
+    if(currentColumn===index)currentDirection=currentDirection==='asc'?'desc':'asc';
+    else{currentColumn=index;currentDirection='asc';}
+
+    const rows=[...tbody.rows].map((row,originalIndex)=>({row,originalIndex,parsed:parseValue(row.cells[index]?.textContent||'')}));
+    rows.sort((a,b)=>{
+      const compared=compareValues(a.parsed,b.parsed,currentDirection);
+      return compared!==0?compared:a.originalIndex-b.originalIndex;
+    });
+    rows.forEach(item=>tbody.appendChild(item.row));
+    updateIndicators(button,currentDirection);
+    syncExportSort(columnName,currentDirection);
+    if(status)status.textContent=`Sorted by ${columnName} · ${currentDirection==='asc'?'ascending':'descending'}`;
+  }));
+})();
+</script>
 {% endblock %}
