@@ -7,7 +7,7 @@ from price_compare_compare import (
     lightweight_supplier_configs,
 )
 from price_compare_export import create_excel
-from price_compare_inputs import render_current_pricelist, render_supplier_inputs
+from price_compare_inputs_v2 import render_current_pricelist, render_supplier_inputs
 from price_compare_results import render_results
 from price_compare_theme import configure_theme, render_hero, section_title
 
