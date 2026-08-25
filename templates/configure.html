@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <div class="step-heading"><span>2</span><h2>Configure mapping</h2></div>
+  <div class="note">This page uses normal browser controls. Changing SKU/EAN options does not rerun or rebuild the Python application.</div>
+
+  {% if errors %}
+  <div class="error-box"><strong>Please fix these items:</strong><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>
+  {% endif %}
+
+  <form action="/compare/{{ workspace_id }}" method="post" class="stack-lg">
+    <article class="mapping-block">
+      <div class="mapping-title"><div><span class="badge">Current</span><strong>{{ current.name }}</strong></div><span class="muted">{{ current_type }}</span></div>
+      <div class="grid-4 align-end">
+        <div><label class="label">Excel sheet</label><select class="select js-sheet" name="current_sheet" data-file-type="current" data-index="0">{% for s in current.metadata.sheets %}<option value="{{ s.name }}" {% if s.name == current_default_sheet %}selected{% endif %}>{{ s.name }}</option>{% endfor %}</select></div>
+        {% if current_type == "Free format pricelist" %}
+        <div><label class="label">EAN column <span class="muted">optional</span></label><select class="select js-column" name="current_ean" data-role="ean" data-file-type="current" data-index="0" data-optional="true"></select></div>
+        <div><label class="label">SKU column <span class="muted">optional</span></label><select class="select js-column" name="current_sku" data-role="sku" data-file-type="current" data-index="0" data-optional="true"></select></div>
+        <div><label class="label">Price column</label><select class="select js-column" name="current_price" data-role="price" data-file-type="current" data-index="0"></select></div>
+        {% else %}
+        <div class="fixed-field"><span>EAN</span><strong>EAN</strong></div><div class="fixed-field"><span>SKU</span><strong>SKU</strong></div><div class="fixed-field"><span>Price</span><strong>Latest Pricelist Value</strong></div>
+        {% endif %}
+      </div>
+      {% if current_type == "Free format pricelist" %}
+      <div class="extras-block"><label class="label">Additional columns to display</label><select class="select js-extras" name="current_extras" multiple size="6" data-file-type="current" data-index="0"></select><p class="help">Ctrl/Cmd-click to select multiple columns. These columns are carried to the browser result and Excel export.</p></div>
+      {% else %}<p class="help">PowerBI mode uses the existing fixed fields and default relevance rule: Realisation Summ &gt; 0 OR Net Available Qty &gt; 0.</p>{% endif %}
+    </article>
+
+    {% for supplier in suppliers %}{% set idx = loop.index0 %}{% set defaults = supplier_defaults[idx] %}
+    <article class="mapping-block supplier-block">
+      <div class="mapping-title"><div><span class="badge badge-alt">Supplier {{ loop.index }}</span><strong>{{ supplier.name }}</strong></div><span class="muted">{{ supplier.size|filesizeformat }}</span></div>
+      <div class="grid-3">
+        <div><label class="label">Supplier name</label><input class="input" type="text" name="supplier_{{ idx }}_name" value="{{ defaults.default_name }}" required></div>
+        <div><label class="label">Excel sheet</label><select class="select js-sheet" name="supplier_{{ idx }}_sheet" data-file-type="supplier" data-index="{{ idx }}">{% for s in supplier.metadata.sheets %}<option value="{{ s.name }}">{{ s.name }}</option>{% endfor %}</select></div>
+        <div><label class="label">Match using</label><select class="select js-method" name="supplier_{{ idx }}_method" data-index="{{ idx }}"><option value="SKU">SKU</option><option value="EAN">EAN</option><option value="EAN + SKU">EAN + SKU</option></select></div>
+      </div>
+      <div class="grid-3">
+        <div class="js-ean-wrap" data-index="{{ idx }}"><label class="label">EAN column</label><select class="select js-column" name="supplier_{{ idx }}_ean" data-role="ean" data-file-type="supplier" data-index="{{ idx }}"></select></div>
+        <div class="js-sku-wrap" data-index="{{ idx }}"><label class="label">SKU column</label><select class="select js-column" name="supplier_{{ idx }}_sku" data-role="sku" data-file-type="supplier" data-index="{{ idx }}"></select></div>
+        <div><label class="label">Price column</label><select class="select js-column" name="supplier_{{ idx }}_price" data-role="price" data-file-type="supplier" data-index="{{ idx }}"></select></div>
+      </div>
+      <p class="help">For EAN + SKU the comparison always tries EAN first and falls back to SKU only when no EAN price is found.</p>
+    </article>
+    {% endfor %}
+
+    <div class="actions sticky-actions"><a class="btn btn-secondary" href="/">Start over</a><button class="btn btn-primary" type="submit">Compare prices</button></div>
+  </form>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const META = {{ metadata_json|safe }};
+function columnsFor(fileType,index,sheetName){const metadata=fileType==='current'?META.current:META.suppliers[Number(index)];const sheet=metadata.sheets.find(s=>s.name===sheetName);return sheet?sheet.columns:[];}
+function guess(columns,role){if(!columns.length)return '';const lowered=columns.map(c=>[String(c).toLowerCase().trim(),c]);const words=role==='ean'?['ean','gtin','barcode']:role==='sku'?['sku','article','item no','item number','product code','material']:['latest pricelist value','salesprice','sales price','net price','purchase price','unit price','supplier price','price','cost'];for(const word of words){const exact=lowered.find(([low])=>low===word);if(exact)return exact[1];}for(const word of words){const partial=lowered.find(([low])=>low.includes(word));if(partial)return partial[1];}return columns[0];}
+function fillSelect(select,columns){const old=select.value,optional=select.dataset.optional==='true';select.innerHTML='';if(optional){const blank=document.createElement('option');blank.value='';blank.textContent='— Not selected —';select.appendChild(blank);}for(const col of columns){const option=document.createElement('option');option.value=col;option.textContent=col;select.appendChild(option);}if([...select.options].some(o=>o.value===old))select.value=old;else{const g=guess(columns,select.dataset.role);if(g&&[...select.options].some(o=>o.value===g))select.value=g;}}
+function fillExtras(select,columns){const selected=new Set([...select.selectedOptions].map(o=>o.value));select.innerHTML='';for(const col of columns){const option=document.createElement('option');option.value=col;option.textContent=col;option.selected=selected.has(col);select.appendChild(option);}}
+function refreshGroup(sheetSelect){const fileType=sheetSelect.dataset.fileType,index=sheetSelect.dataset.index,columns=columnsFor(fileType,index,sheetSelect.value);document.querySelectorAll(`.js-column[data-file-type="${fileType}"][data-index="${index}"]`).forEach(sel=>fillSelect(sel,columns));document.querySelectorAll(`.js-extras[data-file-type="${fileType}"][data-index="${index}"]`).forEach(sel=>fillExtras(sel,columns));}
+function refreshMethod(method){const idx=method.dataset.index;const e=document.querySelector(`.js-ean-wrap[data-index="${idx}"]`),s=document.querySelector(`.js-sku-wrap[data-index="${idx}"]`);if(e)e.classList.toggle('mapping-unused',method.value==='SKU');if(s)s.classList.toggle('mapping-unused',method.value==='EAN');}
+document.querySelectorAll('.js-sheet').forEach(sel=>{refreshGroup(sel);sel.addEventListener('change',()=>refreshGroup(sel));});
+document.querySelectorAll('.js-method').forEach(sel=>{refreshMethod(sel);sel.addEventListener('change',()=>refreshMethod(sel));});
+</script>
+{% endblock %}
