@@ -4,7 +4,16 @@ from pathlib import Path
 
 import pandas as pd
 
+from powerbi_purchase_fields import (
+    LAST_PURCHASE_DATE,
+    LAST_PURCHASE_PRICE,
+    apply as apply_powerbi_purchase_fields,
+)
+
+apply_powerbi_purchase_fields()
+
 from core import (
+    POWERBI_REQUIRED_COLUMNS,
     build_code_lookups,
     compare_all,
     create_excel,
@@ -22,6 +31,8 @@ powerbi = pd.DataFrame({
     "Days Since Last Sale": [3, 5],
     "MinStock": [0, 0],
     "MaxStock": [2, 2],
+    LAST_PURCHASE_PRICE: ["14,408", "18,50"],
+    LAST_PURCHASE_DATE: ["2026-03-12 00:00:00", "2026-08-01"],
 })
 supplier = pd.DataFrame({"EAN": ["111", "999"], "SKU": ["A", "B"], "Price": [8.0, 18.0]})
 config = {
@@ -33,12 +44,26 @@ config = {
     "sku_column": "SKU",
     "price_column": "Price",
 }
+
+assert LAST_PURCHASE_PRICE in POWERBI_REQUIRED_COLUMNS
+assert LAST_PURCHASE_DATE in POWERBI_REQUIRED_COLUMNS
+
 result, supplier_cols, duplicate_info, _ = compare_all(
     powerbi, {"type": "PowerBI Pricelist"}, [(supplier, config)]
 )
 assert not result.columns.duplicated().any()
 assert result["Matched Suppliers"].eq(1).all()
 assert set(result["Cheapest Supplier"]) == {"Test Supplier"}
+assert LAST_PURCHASE_PRICE in result.columns
+assert LAST_PURCHASE_DATE in result.columns
+assert abs(float(result.iloc[0][LAST_PURCHASE_PRICE]) - 14.408) < 1e-9
+assert pd.api.types.is_datetime64_any_dtype(result[LAST_PURCHASE_DATE])
+
+web_model = dataframe_to_table_model(result, supplier_cols)
+price_idx = web_model["columns"].index(LAST_PURCHASE_PRICE)
+date_idx = web_model["columns"].index(LAST_PURCHASE_DATE)
+assert web_model["rows"][0][price_idx]["value"].startswith("€")
+assert web_model["rows"][0][date_idx]["value"] == "2026-03-12"
 
 lookup_ean, lookup_sku = build_code_lookups(result)
 requests = parse_requested_codes("111\t9\nB\t19\nNOPE\t10")
@@ -72,6 +97,8 @@ free_result, _, _, _ = compare_all(
 )
 assert "Brand" in free_result.columns
 assert "Realisation Summ" not in free_result.columns
+assert LAST_PURCHASE_PRICE not in free_result.columns
+assert LAST_PURCHASE_DATE not in free_result.columns
 
 from main import _normalise_excel_columns, _preview_payload, health
 from runtime_main import (
