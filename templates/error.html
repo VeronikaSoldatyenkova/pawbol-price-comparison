@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · Price Comparison{% endblock %}
+{% block content %}
+<section class="card error-card">
+  <h2>{{ title }}</h2>
+  <p>{{ message }}</p>
+  <div class="actions"><a class="btn btn-secondary" href="/">Start a new comparison</a><button class="btn btn-secondary" onclick="history.back()">Go back</button></div>
+</section>
+{% endblock %}
