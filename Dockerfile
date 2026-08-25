@@ -12,7 +12,7 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 COPY . .
 
 # Refuse to build/deploy an image if imports or core workflows are broken.
-RUN python -m py_compile main.py runtime_main.py powerbi_purchase_fields.py production_app.py core.py app.py smoke_test.py && python smoke_test.py
+RUN python -m py_compile main.py runtime_main.py powerbi_purchase_fields.py performance_optimization.py production_app.py core.py app.py smoke_test.py && python smoke_test.py
 
 EXPOSE 8501
 
