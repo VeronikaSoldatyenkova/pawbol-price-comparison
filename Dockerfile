@@ -12,10 +12,10 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 COPY . .
 
 # Refuse to build/deploy an image if imports or core workflows are broken.
-RUN python -m py_compile main.py runtime_main.py core.py app.py smoke_test.py && python smoke_test.py
+RUN python -m py_compile main.py runtime_main.py powerbi_purchase_fields.py production_app.py core.py app.py smoke_test.py && python smoke_test.py
 
 EXPOSE 8501
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8501/health')" || exit 1
 
-CMD ["uvicorn", "runtime_main:app", "--host", "0.0.0.0", "--port", "8501", "--workers", "1"]
+CMD ["uvicorn", "production_app:app", "--host", "0.0.0.0", "--port", "8501", "--workers", "1"]
