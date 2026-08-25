@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <div class="step-heading"><span>3</span><h2>Comparison results</h2></div>
+
+  <div class="metrics">
+    <div class="metric"><span>{{ metrics.product_label }}</span><strong>{{ "{:,}".format(metrics.products) }}</strong></div>
+    <div class="metric"><span>Matched</span><strong>{{ "{:,}".format(metrics.matched) }}</strong></div>
+    <div class="metric"><span>Supplier cheaper</span><strong>{{ "{:,}".format(metrics.cheaper) }}</strong></div>
+    <div class="metric"><span>More expensive</span><strong>{{ "{:,}".format(metrics.more_expensive) }}</strong></div>
+    <div class="metric"><span>Not found</span><strong>{{ "{:,}".format(metrics.not_found) }}</strong></div>
+  </div>
+
+  {% if duplicate_text %}<div class="warning-box">Duplicate supplier identifiers were found; the lowest valid price was used. {{ duplicate_text }}</div>{% endif %}
+
+  <div class="quick-card">
+    <div><h3>Quick code filter</h3><p class="help">Paste EAN/SKU in column 1 and optional Target Price in column 2 directly from Excel.</p></div>
+    <form action="/results/{{ workspace_id }}/quick" method="post" class="quick-form">
+      <textarea name="codes" rows="6" placeholder="3606481482679&#9;10&#10;3606480790065&#9;5&#10;A9R35240&#9;12.50"></textarea>
+      <div class="actions"><button class="btn btn-primary" type="submit">Apply code filter</button><a class="btn btn-secondary" href="/results/{{ workspace_id }}">Clear filter</a></div>
+    </form>
+  </div>
+
+  {% if quick_metrics %}
+  <div class="metrics metrics-small">
+    <div class="metric"><span>Requested</span><strong>{{ quick_metrics.requested }}</strong></div>
+    <div class="metric"><span>Not found</span><strong>{{ quick_metrics.not_found }}</strong></div>
+    <div class="metric"><span>With target</span><strong>{{ quick_metrics.with_target }}</strong></div>
+    <div class="metric"><span>Target met</span><strong>{{ quick_metrics.target_met }}</strong></div>
+  </div>
+  {% if invalid_targets %}<div class="warning-box">{{ invalid_targets }} target price(s) could not be parsed or were not greater than zero. Those rows are shown without target comparison.</div>{% endif %}
+  {% else %}
+  <nav class="view-tabs">
+    <a class="{% if view == 'all' %}active{% endif %}" href="/results/{{ workspace_id }}?view=all">All</a>
+    <a class="{% if view == 'cheaper' %}active{% endif %}" href="/results/{{ workspace_id }}?view=cheaper">Only supplier cheaper</a>
+    <a class="{% if view == 'matched' %}active{% endif %}" href="/results/{{ workspace_id }}?view=matched">Only matched</a>
+    <a class="{% if view == 'not_found' %}active{% endif %}" href="/results/{{ workspace_id }}?view=not_found">Only not found</a>
+  </nav>
+  {% endif %}
+
+  <div class="result-meta">Showing {{ "{:,}".format(shown_count) }} row(s){% if table_truncated %}; browser table is limited to first {{ max_table_rows }} rows for speed{% endif %}.</div>
+  <div class="table-wrap"><table class="data-table"><thead><tr>{% for col in table.columns %}<th>{{ col }}</th>{% endfor %}</tr></thead><tbody>{% for row in table.rows %}<tr>{% for cell in row %}<td class="{{ cell.class }}">{{ cell.value }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+
+  <div class="actions bottom-actions"><a class="btn btn-primary" href="/download/{{ workspace_id }}">Download full comparison Excel</a><a class="btn btn-secondary" href="/configure/{{ workspace_id }}">Back to mapping</a><a class="btn btn-secondary" href="/">Start new comparison</a></div>
+</section>
+{% endblock %}
