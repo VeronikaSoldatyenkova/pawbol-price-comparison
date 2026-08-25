@@ -1,0 +1,16 @@
+.inline-download-form{display:inline-flex;margin:0}
+.results-header .header-actions{align-items:center}
+.table-heading{align-items:flex-start;gap:16px}
+.table-heading>div:first-child{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.sort-help{font-size:11px;color:#94a3b8;font-weight:500}
+.table-heading-right{display:flex;align-items:flex-end;gap:7px;flex-direction:column;text-align:right}
+.sort-status{font-size:11px;color:#64748b;background:#f8fafc;border:1px solid #e2e8f0;border-radius:999px;padding:5px 9px;white-space:nowrap}
+.data-table th{padding:0!important}
+.table-sort-button{appearance:none;width:100%;min-width:max-content;border:0;background:transparent;color:inherit;padding:9px 10px;display:flex;align-items:center;justify-content:space-between;gap:8px;font:inherit;font-weight:750;text-align:left;cursor:pointer}
+.table-sort-button:hover{background:rgba(255,255,255,.11)}
+.table-sort-button:focus-visible{outline:2px solid #99f6e4;outline-offset:-2px}
+.sort-indicator{font-size:12px;opacity:.6;min-width:12px;text-align:center}
+.table-sort-button.sorted-asc .sort-indicator,.table-sort-button.sorted-desc .sort-indicator{opacity:1;color:#ccfbf1;font-weight:900}
+.download-panel{margin-top:16px;border:1px solid #dbe5ea;border-radius:14px;background:linear-gradient(135deg,#f8fffd 0%,#f8fafc 100%);padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:18px}
+.download-panel>div:first-child{max-width:670px}.download-panel strong{font-size:13px}.download-actions{justify-content:flex-end}
+@media(max-width:900px){.download-panel{align-items:flex-start;flex-direction:column}.download-actions{justify-content:flex-start}.table-heading-right{align-items:flex-start;text-align:left}.results-header .header-actions{justify-content:flex-start}}
