@@ -5,7 +5,6 @@ import re
 
 import numpy as np
 import pandas as pd
-import streamlit as st
 
 
 POWERBI_REQUIRED_COLUMNS = [
@@ -54,7 +53,6 @@ def safe_widget_key(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "_", str(text))
 
 
-@st.cache_data(show_spinner=False)
 def file_digest(file_bytes: bytes) -> str:
     return hashlib.sha256(file_bytes).hexdigest()
 
@@ -193,18 +191,19 @@ def guess_column(columns, kind):
     return columns[0]
 
 
-@st.cache_data(show_spinner=False)
 def get_sheet_names(file_bytes):
     return pd.ExcelFile(io.BytesIO(file_bytes)).sheet_names
 
 
-@st.cache_data(show_spinner=False)
 def read_excel_sheet(file_bytes, sheet_name):
-    return pd.read_excel(
+    df = pd.read_excel(
         io.BytesIO(file_bytes),
         sheet_name=sheet_name,
         dtype=object,
     )
+    # Browser forms send strings; normalizing column labels keeps mapping stable.
+    df.columns = [str(col) for col in df.columns]
+    return df
 
 
 def unique_extra_output_names(extra_columns):
