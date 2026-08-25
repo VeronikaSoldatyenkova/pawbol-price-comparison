@@ -70,6 +70,16 @@ free_result, _, _, _ = compare_all(
 assert "Brand" in free_result.columns
 assert "Realisation Summ" not in free_result.columns
 
-from main import health
+from main import _normalise_excel_columns, _preview_payload, health
+
+blank_headers = pd.DataFrame(
+    [["x", "y", "A"]],
+    columns=["Unnamed: 0", "", "SKU"],
+)
+blank_headers = _normalise_excel_columns(blank_headers)
+assert list(blank_headers.columns) == ["Column1", "Column2", "SKU"]
+preview = _preview_payload(blank_headers)
+assert preview["columns"] == ["Column1", "Column2", "SKU"]
+assert preview["rows_shown"] == 1
 assert health()["status"] == "ok"
 print("Price Comparison smoke test: OK")
