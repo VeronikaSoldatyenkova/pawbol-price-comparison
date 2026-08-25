@@ -11,8 +11,8 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY . .
 
-# Fail the image build immediately if Python syntax/imports are broken.
-RUN python -m py_compile main.py core.py app.py && python -c "import main; assert main.health()['status'] == 'ok'"
+# Refuse to build/deploy an image if imports or core workflows are broken.
+RUN python -m py_compile main.py core.py app.py smoke_test.py && python smoke_test.py
 
 EXPOSE 8501
 
