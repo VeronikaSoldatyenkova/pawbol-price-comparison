@@ -1,30 +1,70 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="card">
-  <div class="step-heading"><span>1</span><h2>Upload price lists</h2></div>
-  <form action="/setup" method="post" enctype="multipart/form-data" class="stack-lg">
-    <div>
-      <label class="label">Our current price list type</label>
-      <div class="segmented">
-        <label><input type="radio" name="current_type" value="PowerBI Pricelist" checked><span>PowerBI Pricelist</span></label>
-        <label><input type="radio" name="current_type" value="Free format pricelist"><span>Free format pricelist</span></label>
+<div class="upload-layout">
+  <section class="card page-card">
+    <div class="section-header compact">
+      <div>
+        <div class="eyebrow">Step 1 of 3</div>
+        <div class="step-heading"><span>1</span><h2>Upload price lists</h2></div>
+        <p class="section-copy">Start with your current pricelist, then add one or many supplier files.</p>
       </div>
-      <p class="help">PowerBI keeps the fixed structure and stock/realisation filter. Free format lets you map EAN/SKU/Price and choose additional columns.</p>
+      <div class="workflow-mini"><span class="active">Upload</span><i></i><span>Map</span><i></i><span>Compare</span></div>
     </div>
 
-    <div class="grid-2">
-      <div>
-        <label class="label" for="current_file">Current pricelist</label>
-        <input class="file-input" id="current_file" type="file" name="current_file" accept=".xlsx,.xlsm,.xls" required>
+    <form action="/setup" method="post" enctype="multipart/form-data" class="stack-lg" id="upload-form">
+      <div class="field-group">
+        <label class="label">Our current price list type</label>
+        <div class="segmented large-segmented">
+          <label><input type="radio" name="current_type" value="PowerBI Pricelist" checked><span><strong>PowerBI Pricelist</strong><small>Fixed PowerBI structure</small></span></label>
+          <label><input type="radio" name="current_type" value="Free format pricelist"><span><strong>Free format pricelist</strong><small>Map your own columns</small></span></label>
+        </div>
       </div>
-      <div>
-        <label class="label" for="supplier_files">Alternative supplier pricelists</label>
-        <input class="file-input" id="supplier_files" type="file" name="supplier_files" accept=".xlsx,.xlsm,.xls" multiple required>
-      </div>
-    </div>
 
-    <div class="note">After upload you will configure the sheet, EAN/SKU columns and price columns before the comparison runs.</div>
-    <button class="btn btn-primary" type="submit">Continue to mapping</button>
-  </form>
-</section>
+      <div class="upload-grid">
+        <label class="upload-box" for="current_file">
+          <input id="current_file" type="file" name="current_file" accept=".xlsx,.xlsm,.xls" required>
+          <span class="upload-icon">1</span>
+          <span class="upload-copy"><strong>Current pricelist</strong><small>Choose one Excel file</small><em id="current-file-name">No file selected</em></span>
+          <span class="upload-action">Browse</span>
+        </label>
+
+        <label class="upload-box" for="supplier_files">
+          <input id="supplier_files" type="file" name="supplier_files" accept=".xlsx,.xlsm,.xls" multiple required>
+          <span class="upload-icon alt">+</span>
+          <span class="upload-copy"><strong>Alternative suppliers</strong><small>Select one or multiple Excel files</small><em id="supplier-file-name">No files selected</em></span>
+          <span class="upload-action">Browse</span>
+        </label>
+      </div>
+
+      <div class="note note-inline"><span class="note-icon">i</span><span>After upload you will choose worksheets and map SKU, EAN and price columns before any comparison runs.</span></div>
+      <div class="actions form-actions"><button class="btn btn-primary btn-large" type="submit">Continue to mapping <span aria-hidden="true">→</span></button></div>
+    </form>
+  </section>
+
+  <aside class="side-card">
+    <div class="side-card-header"><span class="mini-icon">✓</span><div><strong>What the app supports</strong><small>Current workflow</small></div></div>
+    <div class="feature-list">
+      <div><span>01</span><p><strong>Flexible current pricelist</strong><small>PowerBI format or any custom Excel layout.</small></p></div>
+      <div><span>02</span><p><strong>EAN + SKU matching</strong><small>EAN first, then SKU fallback.</small></p></div>
+      <div><span>03</span><p><strong>Target price checks</strong><small>Paste codes and targets directly from Excel.</small></p></div>
+      <div><span>04</span><p><strong>Full Excel export</strong><small>Download the complete comparison workbook.</small></p></div>
+    </div>
+  </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const currentInput=document.getElementById('current_file');
+const supplierInput=document.getElementById('supplier_files');
+currentInput.addEventListener('change',()=>{
+  document.getElementById('current-file-name').textContent=currentInput.files.length?currentInput.files[0].name:'No file selected';
+  currentInput.closest('.upload-box').classList.toggle('has-file',currentInput.files.length>0);
+});
+supplierInput.addEventListener('change',()=>{
+  const count=supplierInput.files.length;
+  document.getElementById('supplier-file-name').textContent=count===0?'No files selected':count===1?supplierInput.files[0].name:`${count} supplier files selected`;
+  supplierInput.closest('.upload-box').classList.toggle('has-file',count>0);
+});
+</script>
 {% endblock %}
