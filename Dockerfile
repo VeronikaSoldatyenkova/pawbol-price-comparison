@@ -11,7 +11,8 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY . .
 
-RUN python -m py_compile main.py core.py
+# Fail the image build immediately if Python syntax/imports are broken.
+RUN python -m py_compile main.py core.py app.py && python -c "import main; assert main.health()['status'] == 'ok'"
 
 EXPOSE 8501
 
