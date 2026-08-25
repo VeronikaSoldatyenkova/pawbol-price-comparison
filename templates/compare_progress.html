@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card page-card">
+  <div class="section-header">
+    <div>
+      <div class="eyebrow">Comparing price lists</div>
+      <div class="step-heading"><span>3</span><h2>Processing comparison</h2></div>
+      <p class="section-copy">Large supplier files are processed in the background, so the browser can stay connected without hitting a proxy timeout.</p>
+    </div>
+  </div>
+
+  <div class="comparison-progress-card">
+    <div class="comparison-progress-top">
+      <div>
+        <strong id="compare-stage">Starting comparison…</strong>
+        <p id="compare-detail" class="help">You can keep this page open. It will move to the results automatically.</p>
+      </div>
+      <strong id="compare-percent">1%</strong>
+    </div>
+    <div class="comparison-progress-track"><div id="compare-bar" class="comparison-progress-bar" style="width:1%"></div></div>
+    <div id="compare-error" class="error-box" hidden></div>
+  </div>
+
+  <div class="note note-inline"><span class="note-icon">i</span><div>The comparison now reads only the mapped identifier/price columns from supplier files and does not build the full Excel export until you actually download it.</div></div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function(){
+  const workspace={{ workspace_id|tojson }};
+  const stage=document.getElementById('compare-stage');
+  const detail=document.getElementById('compare-detail');
+  const percent=document.getElementById('compare-percent');
+  const bar=document.getElementById('compare-bar');
+  const errorBox=document.getElementById('compare-error');
+
+  async function poll(){
+    try{
+      const response=await fetch(`/api/compare-progress/${workspace}`,{cache:'no-store'});
+      const data=await response.json();
+      if(!response.ok)throw new Error(data.detail||'Could not read comparison status.');
+      const p=Math.max(0,Math.min(100,Number(data.progress||0)));
+      stage.textContent=data.stage||'Working…';
+      percent.textContent=`${Math.round(p)}%`;
+      bar.style.width=`${p}%`;
+
+      if(data.status==='done'){
+        detail.textContent=data.elapsed_seconds?`Completed in ${data.elapsed_seconds} seconds. Opening results…`:'Opening results…';
+        window.location.replace(`/results/${workspace}`);
+        return;
+      }
+      if(data.status==='error'){
+        errorBox.hidden=false;
+        errorBox.textContent=data.error||'Comparison failed.';
+        detail.textContent='Return to mapping, correct the issue and run the comparison again.';
+        return;
+      }
+      window.setTimeout(poll,900);
+    }catch(error){
+      detail.textContent='Connection interrupted. Retrying…';
+      window.setTimeout(poll,1800);
+    }
+  }
+  poll();
+})();
+</script>
+{% endblock %}
