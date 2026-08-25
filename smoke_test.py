@@ -1,4 +1,7 @@
 """Build-time smoke tests for the production price-comparison image."""
+import tempfile
+from pathlib import Path
+
 import pandas as pd
 
 from core import (
@@ -71,6 +74,7 @@ assert "Brand" in free_result.columns
 assert "Realisation Summ" not in free_result.columns
 
 from main import _normalise_excel_columns, _preview_payload, health
+from runtime_main import _authoritative_sheet_columns, _robust_workbook_metadata
 
 blank_headers = pd.DataFrame(
     [["x", "y", "A"]],
@@ -81,5 +85,35 @@ assert list(blank_headers.columns) == ["Column1", "Column2", "SKU"]
 preview = _preview_payload(blank_headers)
 assert preview["columns"] == ["Column1", "Column2", "SKU"]
 assert preview["rows_shown"] == 1
+
+# Regression: a supplier workbook may contain a title only in A1 while the
+# real Code / Designation / Price data begins several rows later. nrows=0
+# used to expose only the title column in mapping even though preview showed
+# Column1 and Column2.
+with tempfile.TemporaryDirectory() as temp_dir:
+    path = Path(temp_dir) / "supplier_blank_headers.xlsx"
+    raw = pd.DataFrame(
+        [
+            ["NEGOWATT - Price list", None, None],
+            ["2026-08-03", None, None],
+            [None, None, None],
+            ["Code", "Designation", "Price"],
+            ["A9A15215", "Transformer", 29.697],
+        ]
+    )
+    raw.to_excel(path, index=False, header=False)
+
+    metadata = _robust_workbook_metadata(str(path))
+    cols = metadata["sheets"][0]["columns"]
+    assert cols == ["NEGOWATT - Price list", "Column1", "Column2"], cols
+
+    file_meta = {
+        "name": path.name,
+        "path": str(path),
+        "metadata": metadata,
+    }
+    actual_cols = _authoritative_sheet_columns(file_meta, metadata["sheets"][0]["name"])
+    assert actual_cols == ["NEGOWATT - Price list", "Column1", "Column2"], actual_cols
+
 assert health()["status"] == "ok"
 print("Price Comparison smoke test: OK")
