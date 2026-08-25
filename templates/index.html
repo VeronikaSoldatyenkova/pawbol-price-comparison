@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="upload-layout">
+<div class="upload-layout" id="upload-page-content">
   <section class="card page-card">
     <div class="section-header compact">
       <div>
@@ -37,7 +37,7 @@
       </div>
 
       <div class="note note-inline"><span class="note-icon">i</span><span>After upload you will choose worksheets and map SKU, EAN and price columns before any comparison runs.</span></div>
-      <div class="actions form-actions"><button class="btn btn-primary btn-large" type="submit">Continue to mapping <span aria-hidden="true">→</span></button></div>
+      <div class="actions form-actions"><button class="btn btn-primary btn-large" type="submit" id="continue-button">Continue to mapping <span aria-hidden="true">→</span></button></div>
     </form>
   </section>
 
@@ -51,12 +51,56 @@
     </div>
   </aside>
 </div>
+
+<div class="mapping-loader" id="mapping-loader" hidden aria-live="polite" aria-busy="true">
+  <div class="mapping-loader-card">
+    <div class="eyebrow">Preparing mapping</div>
+    <div class="step-heading"><span>2</span><h2>Reading uploaded price lists</h2></div>
+    <p class="section-copy" id="mapping-loader-detail">Uploading files to the server…</p>
+
+    <div class="mapping-loader-status">
+      <strong id="mapping-loader-stage">Uploading files…</strong>
+      <strong id="mapping-loader-percent">8%</strong>
+    </div>
+    <div class="mapping-loader-track"><div class="mapping-loader-bar" id="mapping-loader-bar" style="width:8%"></div></div>
+
+    <div class="mapping-loader-steps">
+      <span class="active" id="loader-step-upload">1&nbsp; Upload files</span>
+      <span id="loader-step-read">2&nbsp; Read workbook structure</span>
+      <span id="loader-step-map">3&nbsp; Prepare mapping</span>
+    </div>
+    <p class="help">Large Excel files can take a little longer. Please keep this page open.</p>
+  </div>
+</div>
+
+<style>
+.mapping-loader{
+  position:fixed;inset:0;z-index:1000;display:grid;place-items:center;
+  padding:24px;background:rgba(248,250,252,.94);backdrop-filter:blur(6px);
+}
+.mapping-loader-card{
+  width:min(620px,100%);background:#fff;border:1px solid #e2e8f0;border-radius:18px;
+  padding:28px;box-shadow:0 24px 70px rgba(15,23,42,.14);
+}
+.mapping-loader-status{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-top:24px;font-size:13px}
+.mapping-loader-status strong:last-child{color:#0f766e}
+.mapping-loader-track{height:10px;margin-top:10px;background:#e2e8f0;border-radius:999px;overflow:hidden}
+.mapping-loader-bar{height:100%;border-radius:999px;background:linear-gradient(90deg,#0f766e,#14b8a6);transition:width .55s ease}
+.mapping-loader-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:20px}
+.mapping-loader-steps span{padding:9px 10px;border-radius:9px;background:#f8fafc;color:#94a3b8;font-size:11px;font-weight:700;text-align:center;border:1px solid #e2e8f0}
+.mapping-loader-steps span.active{background:#ecfdf5;color:#0f766e;border-color:#99f6e4}
+.mapping-loader-steps span.done{background:#f0fdfa;color:#115e59;border-color:#ccfbf1}
+@media(max-width:700px){.mapping-loader-steps{grid-template-columns:1fr}.mapping-loader-card{padding:22px}}
+</style>
 {% endblock %}
 
 {% block scripts %}
 <script>
 const currentInput=document.getElementById('current_file');
 const supplierInput=document.getElementById('supplier_files');
+const uploadForm=document.getElementById('upload-form');
+const mappingLoader=document.getElementById('mapping-loader');
+
 currentInput.addEventListener('change',()=>{
   document.getElementById('current-file-name').textContent=currentInput.files.length?currentInput.files[0].name:'No file selected';
   currentInput.closest('.upload-box').classList.toggle('has-file',currentInput.files.length>0);
@@ -65,6 +109,32 @@ supplierInput.addEventListener('change',()=>{
   const count=supplierInput.files.length;
   document.getElementById('supplier-file-name').textContent=count===0?'No files selected':count===1?supplierInput.files[0].name:`${count} supplier files selected`;
   supplierInput.closest('.upload-box').classList.toggle('has-file',count>0);
+});
+
+function setLoaderState(percent,stage,detail,activeStep){
+  document.getElementById('mapping-loader-percent').textContent=`${percent}%`;
+  document.getElementById('mapping-loader-bar').style.width=`${percent}%`;
+  document.getElementById('mapping-loader-stage').textContent=stage;
+  document.getElementById('mapping-loader-detail').textContent=detail;
+  const ids=['loader-step-upload','loader-step-read','loader-step-map'];
+  ids.forEach((id,index)=>{
+    const el=document.getElementById(id);
+    el.classList.toggle('done',index<activeStep);
+    el.classList.toggle('active',index===activeStep);
+  });
+}
+
+uploadForm.addEventListener('submit',()=>{
+  if(!uploadForm.checkValidity())return;
+  mappingLoader.hidden=false;
+  document.body.style.overflow='hidden';
+  document.getElementById('continue-button').disabled=true;
+
+  setLoaderState(8,'Uploading files…','Uploading the selected Excel files to the server.',0);
+  window.setTimeout(()=>setLoaderState(34,'Reading workbook structure…','Detecting worksheets and available columns.',1),900);
+  window.setTimeout(()=>setLoaderState(62,'Reading workbook structure…','Checking workbook metadata for all uploaded suppliers.',1),2500);
+  window.setTimeout(()=>setLoaderState(82,'Preparing mapping…','Preparing SKU, EAN and Price mapping controls.',2),5000);
+  window.setTimeout(()=>setLoaderState(92,'Almost ready…','Finishing workbook preparation. Large files may need a little more time.',2),9000);
 });
 </script>
 {% endblock %}
