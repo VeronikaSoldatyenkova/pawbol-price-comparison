@@ -3,19 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Price List Comparison{% endblock %}</title>
+  <meta name="theme-color" content="#0f766e">
+  <title>{% block title %}Price Comparison{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
   <main class="page-shell">
     <header class="hero">
-      <div>
-        <h1>📊 Price List Comparison</h1>
-        <p>Compare current prices with one or many supplier price lists.</p>
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true"><span>€</span></div>
+        <div>
+          <h1>Price Comparison</h1>
+          <p>Compare your current prices with supplier pricelists in one place.</p>
+        </div>
       </div>
-      <div class="status-pill">HTTP app · no Streamlit reruns</div>
+      <div class="status-pill"><span class="status-dot"></span>Stable mode</div>
     </header>
     {% block content %}{% endblock %}
+    <footer class="app-footer">Price Comparison · Excel files are processed only for the active comparison workspace.</footer>
   </main>
   {% block scripts %}{% endblock %}
 </body>
