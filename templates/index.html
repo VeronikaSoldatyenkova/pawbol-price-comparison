@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <div class="step-heading"><span>1</span><h2>Upload price lists</h2></div>
+  <form action="/setup" method="post" enctype="multipart/form-data" class="stack-lg">
+    <div>
+      <label class="label">Our current price list type</label>
+      <div class="segmented">
+        <label><input type="radio" name="current_type" value="PowerBI Pricelist" checked><span>PowerBI Pricelist</span></label>
+        <label><input type="radio" name="current_type" value="Free format pricelist"><span>Free format pricelist</span></label>
+      </div>
+      <p class="help">PowerBI keeps the fixed structure and stock/realisation filter. Free format lets you map EAN/SKU/Price and choose additional columns.</p>
+    </div>
+
+    <div class="grid-2">
+      <div>
+        <label class="label" for="current_file">Current pricelist</label>
+        <input class="file-input" id="current_file" type="file" name="current_file" accept=".xlsx,.xlsm,.xls" required>
+      </div>
+      <div>
+        <label class="label" for="supplier_files">Alternative supplier pricelists</label>
+        <input class="file-input" id="supplier_files" type="file" name="supplier_files" accept=".xlsx,.xlsm,.xls" multiple required>
+      </div>
+    </div>
+
+    <div class="note">After upload you will configure the sheet, EAN/SKU columns and price columns before the comparison runs.</div>
+    <button class="btn btn-primary" type="submit">Continue to mapping</button>
+  </form>
+</section>
+{% endblock %}
