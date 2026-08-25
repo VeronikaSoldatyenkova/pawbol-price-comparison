@@ -1,6 +1,5 @@
 from pathlib import Path
 
-import pandas as pd
 import streamlit as st
 
 from price_compare_common import (
@@ -35,11 +34,10 @@ def _valid_price_count(df, price_column):
 
 def render_current_pricelist():
     """
-    Render current-pricelist inputs with a stable widget tree.
+    Stable current-pricelist UI.
 
-    Important stability rule: after a file is loaded, the same EAN/SKU/Price mapping
-    widgets are always rendered. Switching PowerBI <-> Free format therefore does not
-    create/remove a large group of widgets during a Streamlit rerun.
+    Mapping widget keys are scoped to the actual file + sheet, which prevents stale
+    column selections from one worksheet being reused on another worksheet.
     """
     section_title(1, "Our current price list")
 
@@ -72,6 +70,7 @@ def render_current_pricelist():
             return None
 
         our_bytes = our_file.getvalue()
+        our_digest = file_digest(our_bytes)
 
         try:
             our_sheets = get_sheet_names(our_bytes)
@@ -94,7 +93,7 @@ def render_current_pricelist():
                 "Sheet",
                 our_sheets,
                 index=default_index,
-                key="our_prices_sheet",
+                key=f"our_prices_sheet_{our_digest[:10]}",
             )
 
         try:
@@ -109,8 +108,10 @@ def render_current_pricelist():
 
         our_columns = list(our_df.columns)
         errors = []
+        mapping_key = safe_widget_key(
+            f"our_mapping_{our_digest[:10]}_{our_sheet}"
+        )
 
-        # Stable mapping widgets: always present after the workbook is loaded.
         st.markdown("**Column mapping**")
         ean_guess = guess_column(our_columns, "EAN")
         sku_guess = guess_column(our_columns, "SKU")
@@ -138,42 +139,46 @@ def render_current_pricelist():
                 "EAN column",
                 ean_options,
                 index=_safe_index(ean_options, default_ean),
-                key="our_mapping_ean_column",
-                help="For PowerBI mode this is fixed to EAN by validation.",
+                key=f"{mapping_key}_ean",
+                help="For PowerBI mode the comparison still uses the fixed EAN field.",
             )
         with col2:
             selected_sku = st.selectbox(
                 "SKU column",
                 sku_options,
                 index=_safe_index(sku_options, default_sku),
-                key="our_mapping_sku_column",
-                help="For PowerBI mode this is fixed to SKU by validation.",
+                key=f"{mapping_key}_sku",
+                help="For PowerBI mode the comparison still uses the fixed SKU field.",
             )
         with col3:
             price_column = st.selectbox(
                 "Price column",
                 our_columns,
                 index=_safe_index(our_columns, default_price),
-                key="our_mapping_price_column",
+                key=f"{mapping_key}_price",
             )
 
         ean_column = None if selected_ean == NONE_LABEL else selected_ean
         sku_column = None if selected_sku == NONE_LABEL else selected_sku
 
-        excluded = {
-            col for col in [ean_column, sku_column, price_column] if col is not None
-        }
-        extra_options = [col for col in our_columns if col not in excluded]
-        extra_columns = st.multiselect(
+        # Keep multiselect OPTIONS stable. We filter mapped identifier/price columns
+        # after selection instead of removing them from options during a rerun.
+        selected_extra_columns = st.multiselect(
             "Additional columns to display",
-            options=extra_options,
+            options=our_columns,
             default=[],
-            key="our_mapping_extra_columns",
+            key=f"{mapping_key}_extras",
             help=(
-                "Used only for Free format pricelists. Selected columns are included "
-                "in the browser result and downloaded Excel."
+                "Used only for Free format pricelists. Identifier and price columns "
+                "are automatically ignored here if selected."
             ),
         )
+        reserved_mapping_columns = {
+            col for col in [ean_column, sku_column, price_column] if col is not None
+        }
+        extra_columns = [
+            col for col in selected_extra_columns if col not in reserved_mapping_columns
+        ]
 
         valid_prices = _valid_price_count(our_df, price_column)
         info1, info2 = st.columns(2)
@@ -187,8 +192,6 @@ def render_current_pricelist():
                     "PowerBI Pricelist is missing required columns: " + ", ".join(missing)
                 )
 
-            # PowerBI behavior remains fixed regardless of what a stale widget value
-            # may contain after switching from Free format mode.
             our_config = {
                 "type": "PowerBI Pricelist",
                 "ean_column": "EAN",
@@ -255,11 +258,11 @@ def render_current_pricelist():
 
 def render_supplier_inputs(initial_errors=None):
     """
-    Render suppliers without expanders/popovers or branch-dependent selectboxes.
+    Stable supplier mapping UI.
 
-    Every supplier always owns exactly these widgets:
-      supplier name, sheet, match method, EAN column, SKU column, price column.
-    Changing SKU/EAN/EAN+SKU therefore keeps the React/Streamlit element tree stable.
+    There are no expanders, popovers, preview toggles, or branch-dependent mapping
+    widgets. Every supplier always renders Match method + EAN + SKU + Price controls.
+    Only the comparison configuration changes when the match method changes.
     """
     section_title(2, "Alternative suppliers")
 
@@ -304,10 +307,8 @@ def render_supplier_inputs(initial_errors=None):
 
     for index, supplier_file in enumerate(supplier_files, start=1):
         file_bytes = supplier_file.getvalue()
-        # Include a digest fragment so replacing a file with the same filename does
-        # not leave incompatible widget state behind.
         digest = file_digest(file_bytes)
-        base_key = safe_widget_key(
+        file_key = safe_widget_key(
             f"supplier_{index}_{supplier_file.name}_{digest[:10]}"
         )
         default_name = Path(supplier_file.name).stem
@@ -330,7 +331,7 @@ def render_supplier_inputs(initial_errors=None):
                 supplier_name = st.text_input(
                     "Supplier name",
                     value=default_name,
-                    key=f"{base_key}_name",
+                    key=f"{file_key}_name",
                     help="Used in result columns and in Cheapest Supplier.",
                 ).strip()
             entered_names.append(supplier_name)
@@ -339,7 +340,7 @@ def render_supplier_inputs(initial_errors=None):
                 sheet_name = st.selectbox(
                     "Excel sheet",
                     sheets,
-                    key=f"{base_key}_sheet",
+                    key=f"{file_key}_sheet",
                 )
 
             try:
@@ -357,27 +358,30 @@ def render_supplier_inputs(initial_errors=None):
                 continue
 
             columns = list(supplier_df.columns)
+            # Scope mapping widget state to the actual worksheet. Switching sheets can
+            # never reuse an old column value that is invalid for the new worksheet.
+            mapping_key = safe_widget_key(f"{file_key}_{sheet_name}")
+
             match_method = st.radio(
                 "Match using",
                 ["SKU", "EAN", "EAN + SKU"],
                 horizontal=True,
-                key=f"{base_key}_match",
+                key=f"{mapping_key}_match",
                 help="EAN + SKU tries EAN first and uses SKU only if EAN does not match.",
             )
 
-            # IMPORTANT: all three mapping selectboxes are ALWAYS rendered.
-            # We only decide later which identifiers are actually used.
             ean_guess = guess_column(columns, "EAN")
             sku_guess = guess_column(columns, "SKU")
             price_guess = guess_column(columns, "PRICE")
 
+            # All three selectboxes ALWAYS exist, regardless of match method.
             col1, col2, col3 = st.columns(3)
             with col1:
                 selected_ean_column = st.selectbox(
                     "EAN column",
                     columns,
                     index=_safe_index(columns, ean_guess),
-                    key=f"{base_key}_ean_col",
+                    key=f"{mapping_key}_ean_col",
                     help="Used when match mode is EAN or EAN + SKU.",
                 )
             with col2:
@@ -385,7 +389,7 @@ def render_supplier_inputs(initial_errors=None):
                     "SKU column",
                     columns,
                     index=_safe_index(columns, sku_guess),
-                    key=f"{base_key}_sku_col",
+                    key=f"{mapping_key}_sku_col",
                     help="Used when match mode is SKU or EAN + SKU.",
                 )
             with col3:
@@ -393,7 +397,7 @@ def render_supplier_inputs(initial_errors=None):
                     "Price column",
                     columns,
                     index=_safe_index(columns, price_guess),
-                    key=f"{base_key}_price_col",
+                    key=f"{mapping_key}_price_col",
                 )
 
             ean_column = (
@@ -425,14 +429,6 @@ def render_supplier_inputs(initial_errors=None):
             stat1.metric("Rows", f"{len(supplier_df):,}")
             stat2.metric("Columns", f"{len(columns):,}")
             stat3.metric("Valid prices", f"{valid_price_count:,}")
-
-            # Preview was intentionally removed from this highly interactive area.
-            # It was not needed for comparison logic and was a second source of
-            # frontend reconciliation failures during mapping reruns.
-            st.caption(
-                "Mapping controls are kept static for stability. "
-                "Changing match mode no longer creates or removes UI components."
-            )
 
             if valid_price_count == 0:
                 configuration_errors.append(
