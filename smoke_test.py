@@ -74,7 +74,12 @@ assert "Brand" in free_result.columns
 assert "Realisation Summ" not in free_result.columns
 
 from main import _normalise_excel_columns, _preview_payload, health
-from runtime_main import _authoritative_sheet_columns, _robust_workbook_metadata
+from runtime_main import (
+    _authoritative_sheet_columns,
+    _displayed_excel_bytes,
+    _robust_workbook_metadata,
+    _sort_displayed_result,
+)
 
 blank_headers = pd.DataFrame(
     [["x", "y", "A"]],
@@ -87,9 +92,7 @@ assert preview["columns"] == ["Column1", "Column2", "SKU"]
 assert preview["rows_shown"] == 1
 
 # Regression: a supplier workbook may contain a title only in A1 while the
-# real Code / Designation / Price data begins several rows later. nrows=0
-# used to expose only the title column in mapping even though preview showed
-# Column1 and Column2.
+# real Code / Designation / Price data begins several rows later.
 with tempfile.TemporaryDirectory() as temp_dir:
     path = Path(temp_dir) / "supplier_blank_headers.xlsx"
     raw = pd.DataFrame(
@@ -114,6 +117,15 @@ with tempfile.TemporaryDirectory() as temp_dir:
     }
     actual_cols = _authoritative_sheet_columns(file_meta, metadata["sheets"][0]["name"])
     assert actual_cols == ["NEGOWATT - Price list", "Column1", "Column2"], actual_cols
+
+# Displayed-result download must export the current filtered table, including
+# Quick Filter target columns, and must respect a selected browser sort.
+sorted_quick = _sort_displayed_result(quick, "Target Price", "desc")
+assert list(sorted_quick["Target Price"].dropna()) == sorted(
+    list(sorted_quick["Target Price"].dropna()), reverse=True
+)
+shown_excel = _displayed_excel_bytes(sorted_quick, supplier_cols)
+assert len(shown_excel) > 1000
 
 assert health()["status"] == "ok"
 print("Price Comparison smoke test: OK")
