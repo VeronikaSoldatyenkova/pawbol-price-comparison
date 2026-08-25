@@ -1,12 +1,12 @@
-"""PowerBI-specific purchase fields for the production application.
+"""PowerBI-specific purchase fields and result layout.
 
 The PowerBI current pricelist has two additional fixed fields:
 - Последняя Цена Закупки
 - Последняя Дата Закупки
 
-This module patches the existing comparison core before the FastAPI runtime is
-imported, so the fields participate in validation, preparation and browser
-rendering without affecting Free format pricelists.
+The module also keeps all comparison-price columns together in the final
+result. Operational PowerBI fields are moved to the far right so they do not
+separate Our Price from supplier prices.
 """
 
 import pandas as pd
@@ -20,6 +20,7 @@ LAST_PURCHASE_DATE = "Последняя Дата Закупки"
 _applied = False
 _original_prepare_current_pricelist = _core.prepare_current_pricelist
 _original_dataframe_to_table_model = _core.dataframe_to_table_model
+_original_compare_all = _core.compare_all
 
 
 def _append_once(values, item):
@@ -39,6 +40,59 @@ def _prepare_current_pricelist(current_df, config):
         )
 
     return result, extra_columns
+
+
+def _compare_all(current_df, current_config, supplier_items):
+    """Run the normal comparison, then apply the PowerBI-specific column order."""
+    result, supplier_price_columns, duplicate_info, current_extra_columns = (
+        _original_compare_all(current_df, current_config, supplier_items)
+    )
+
+    if current_config.get("type") != "PowerBI Pricelist":
+        return result, supplier_price_columns, duplicate_info, current_extra_columns
+
+    # Keep every price/comparison field together.  PowerBI operational fields
+    # are useful context, but belong at the right-hand side of the table.
+    powerbi_tail = [
+        col
+        for col in _core.POWERBI_OUTPUT_COLUMNS
+        if col in result.columns
+    ]
+
+    comparison_columns = [
+        "EAN",
+        "SKU",
+        "Our Price",
+        *[col for col in supplier_price_columns if col in result.columns],
+        "Cheapest Price",
+        "Cheapest Supplier",
+        "Saving €",
+        "Saving %",
+        "Status",
+        "Matched Suppliers",
+    ]
+
+    ordered = []
+    for col in comparison_columns:
+        if col in result.columns and col not in ordered:
+            ordered.append(col)
+
+    # Preserve any future comparison fields that are neither PowerBI context
+    # columns nor the private display flag.
+    for col in result.columns:
+        if (
+            col not in ordered
+            and col not in powerbi_tail
+            and col != "_relevant_for_display"
+        ):
+            ordered.append(col)
+
+    ordered.extend(col for col in powerbi_tail if col not in ordered)
+    if "_relevant_for_display" in result.columns:
+        ordered.append("_relevant_for_display")
+
+    result = result[ordered].copy()
+    return result, supplier_price_columns, duplicate_info, current_extra_columns
 
 
 def _dataframe_to_table_model(df, supplier_price_columns, target_mode=False):
@@ -96,5 +150,6 @@ def apply():
     _append_once(_core.POWERBI_OUTPUT_COLUMNS, LAST_PURCHASE_DATE)
 
     _core.prepare_current_pricelist = _prepare_current_pricelist
+    _core.compare_all = _compare_all
     _core.dataframe_to_table_model = _dataframe_to_table_model
     _applied = True
