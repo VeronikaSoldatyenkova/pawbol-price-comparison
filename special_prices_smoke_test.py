@@ -63,4 +63,15 @@ assert BELOW_SPECIAL in model["columns"]
 assert "Target Price" not in model["columns"]
 assert "Below Target" not in model["columns"]
 
+# Production must actually install the endpoints used by the updated template.
+from production_app import app
+
+routes = {
+    (getattr(route, "path", None), method)
+    for route in app.router.routes
+    for method in (getattr(route, "methods", set()) or set())
+}
+assert ("/results/{workspace_id}/quick-filter", "POST") in routes
+assert ("/download/{workspace_id}/shown-smart", "POST") in routes
+
 print("Special Prices smoke test: OK")
