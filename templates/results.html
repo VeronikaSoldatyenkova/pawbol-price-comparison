@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% set qmode = quick_mode|default('default') %}
+{% set is_legrand = legrand|default(false) %}
 {% block content %}
 <section class="card page-card results-page">
   <div class="section-header results-header">
@@ -8,8 +10,10 @@
       <p class="section-copy">Review matches, sort any column, filter specific products and export either the displayed result or the complete comparison.</p>
     </div>
     <div class="header-actions">
-      <form action="/download/{{ workspace_id }}/shown" method="post" class="inline-download-form">
+      <form action="/download/{{ workspace_id }}/shown-smart" method="post" class="inline-download-form">
         <input type="hidden" name="view" value="{{ view }}">
+        <input type="hidden" name="quick_mode" value="{{ qmode }}">
+        {% if is_legrand %}<input type="hidden" name="legrand" value="1">{% endif %}
         <textarea name="codes" hidden>{% if quick %}{{ quick_codes_text }}{% endif %}</textarea>
         <input type="hidden" name="sort_col" value="" class="js-export-sort-col">
         <input type="hidden" name="sort_dir" value="asc" class="js-export-sort-dir">
@@ -31,10 +35,46 @@
   {% if duplicate_text %}<div class="warning-box">Duplicate supplier identifiers were found; the lowest valid price was used. {{ duplicate_text }}</div>{% endif %}
 
   <div class="quick-card">
-    <div class="quick-intro"><span class="quick-icon">⌕</span><div><h3>Quick code filter</h3><p class="help">Paste EAN/SKU in column 1 and optional Target Price in column 2 directly from Excel. The pasted order is preserved.</p></div></div>
-    <form action="/results/{{ workspace_id }}/quick" method="post" class="quick-form">
-      <textarea name="codes" rows="6" placeholder="3606481482679&#9;10&#10;3606480790065&#9;5&#10;A9R35240&#9;12.50">{% if quick %}{{ quick_codes_text }}{% endif %}</textarea>
-      <div class="actions"><button class="btn btn-primary" type="submit">Apply code filter</button><a class="btn btn-secondary" href="/results/{{ workspace_id }}">Clear filter</a></div>
+    <div class="quick-intro">
+      <span class="quick-icon">⌕</span>
+      <div>
+        <h3>Quick code filter</h3>
+        <p class="help" id="quick-mode-description">
+          {% if qmode == 'special' %}
+          Paste EAN/SKU in column 1 and supplier Special Price in column 2. Prices below the Special Price are highlighted in blue.
+          {% else %}
+          Paste EAN/SKU in column 1 and optional Target Price in column 2 directly from Excel. The pasted order is preserved.
+          {% endif %}
+        </p>
+      </div>
+    </div>
+
+    <form action="/results/{{ workspace_id }}/quick-filter" method="post" class="quick-form" id="quick-filter-form">
+      <div class="quick-mode-selector" role="radiogroup" aria-label="Quick filter mode">
+        <label class="quick-mode-option">
+          <input type="radio" name="quick_mode" value="default" {% if qmode != 'special' %}checked{% endif %}>
+          <span><strong>Default Code Filter</strong><small>EAN/SKU + optional Target Price</small></span>
+        </label>
+        <label class="quick-mode-option">
+          <input type="radio" name="quick_mode" value="special" {% if qmode == 'special' %}checked{% endif %}>
+          <span><strong>Special Prices From Supplier</strong><small>EAN/SKU + supplier Special Price</small></span>
+        </label>
+      </div>
+
+      <div class="special-mode-options" id="special-mode-options" {% if qmode != 'special' %}hidden{% endif %}>
+        <label class="legrand-toggle">
+          <input type="checkbox" name="legrand" value="1" id="legrand-checkbox" {% if is_legrand %}checked{% endif %}>
+          <span class="legrand-switch" aria-hidden="true"></span>
+          <span><strong>Legrand</strong><small>Recalculate Special Price before comparison</small></span>
+        </label>
+        <div class="special-formula">
+          <span>Formula</span>
+          <code>Special Price + ((Our Price − Special Price) × 0.3 × 1.25)</code>
+        </div>
+      </div>
+
+      <textarea name="codes" rows="6" id="quick-codes" placeholder="3606481482679&#9;10&#10;3606480790065&#9;5&#10;A9R35240&#9;12.50">{% if quick %}{{ quick_codes_text }}{% endif %}</textarea>
+      <div class="actions"><button class="btn btn-primary" type="submit" id="quick-submit-button">{% if qmode == 'special' %}Apply special prices{% else %}Apply code filter{% endif %}</button><a class="btn btn-secondary" href="/results/{{ workspace_id }}">Clear filter</a></div>
     </form>
   </div>
 
@@ -42,10 +82,16 @@
   <div class="metrics metrics-small quick-metrics">
     <div class="metric"><span>Requested</span><strong>{{ quick_metrics.requested }}</strong></div>
     <div class="metric"><span>Not found</span><strong>{{ quick_metrics.not_found }}</strong></div>
-    <div class="metric"><span>With target</span><strong>{{ quick_metrics.with_target }}</strong></div>
-    <div class="metric metric-target"><span>Target met</span><strong>{{ quick_metrics.target_met }}</strong></div>
+    <div class="metric"><span>{% if qmode == 'special' %}With special price{% else %}With target{% endif %}</span><strong>{{ quick_metrics.with_target }}</strong></div>
+    <div class="metric metric-target"><span>{% if qmode == 'special' %}Special price beaten{% else %}Target met{% endif %}</span><strong>{{ quick_metrics.target_met }}</strong></div>
   </div>
-  {% if invalid_targets %}<div class="warning-box">{{ invalid_targets }} target price(s) could not be parsed or were not greater than zero. Those rows are shown without target comparison.</div>{% endif %}
+
+  {% if qmode == 'special' and is_legrand %}
+  <div class="special-active-note"><strong>Legrand adjustment active.</strong> The displayed <strong>Special Price</strong> is already recalculated with Our Price and that recalculated value is used for all blue comparisons.</div>
+  {% if legrand_missing_our_price|default(0) %}<div class="warning-box">{{ legrand_missing_our_price }} row(s) could not apply the Legrand formula because Our Price was missing. The entered Special Price was kept for those rows.</div>{% endif %}
+  {% endif %}
+
+  {% if invalid_targets %}<div class="warning-box">{{ invalid_targets }} {% if qmode == 'special' %}special price{% else %}target price{% endif %}(s) could not be parsed or were not greater than zero. Those rows are shown without price-threshold comparison.</div>{% endif %}
   {% else %}
   <nav class="view-tabs">
     <a class="{% if view == 'all' %}active{% endif %}" href="/results/{{ workspace_id }}?view=all">All</a>
@@ -73,8 +119,10 @@
   <div class="download-panel">
     <div><strong>Export results</strong><p class="help">Displayed table exports the current Quick Filter or selected result tab. Full comparison exports every product from the comparison.</p></div>
     <div class="actions download-actions">
-      <form action="/download/{{ workspace_id }}/shown" method="post" class="inline-download-form">
+      <form action="/download/{{ workspace_id }}/shown-smart" method="post" class="inline-download-form">
         <input type="hidden" name="view" value="{{ view }}">
+        <input type="hidden" name="quick_mode" value="{{ qmode }}">
+        {% if is_legrand %}<input type="hidden" name="legrand" value="1">{% endif %}
         <textarea name="codes" hidden>{% if quick %}{{ quick_codes_text }}{% endif %}</textarea>
         <input type="hidden" name="sort_col" value="" class="js-export-sort-col">
         <input type="hidden" name="sort_dir" value="asc" class="js-export-sort-dir">
@@ -86,11 +134,48 @@
 
   <div class="actions bottom-actions"><a class="btn btn-secondary" href="/configure/{{ workspace_id }}">Back to mapping</a><a class="btn btn-secondary" href="/">Start new comparison</a></div>
 </section>
+
+<style>
+.quick-mode-selector{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:12px}
+.quick-mode-option{position:relative;cursor:pointer}
+.quick-mode-option input{position:absolute;opacity:0;pointer-events:none}
+.quick-mode-option span{display:flex;flex-direction:column;gap:3px;padding:12px 14px;border:1px solid #cbd5e1;border-radius:11px;background:#fff;transition:.16s ease}
+.quick-mode-option strong{font-size:12px;color:#334155}.quick-mode-option small{font-size:11px;color:#64748b}
+.quick-mode-option input:checked+span{border-color:#5eead4;background:#f0fdfa;box-shadow:0 0 0 3px rgba(15,118,110,.07)}
+.quick-mode-option input:checked+span strong{color:#0f766e}
+.special-mode-options{display:flex;gap:12px;align-items:stretch;flex-wrap:wrap;margin:0 0 12px;padding:12px;border:1px solid #bae6fd;background:#f0f9ff;border-radius:11px}
+.legrand-toggle{display:flex;align-items:center;gap:9px;cursor:pointer;min-width:220px}.legrand-toggle>input{position:absolute;opacity:0}.legrand-toggle>span:last-child{display:flex;flex-direction:column}.legrand-toggle strong{font-size:12px;color:#075985}.legrand-toggle small{font-size:10px;color:#64748b;margin-top:2px}
+.legrand-switch{width:38px;height:21px;border-radius:999px;background:#cbd5e1;position:relative;transition:.16s;flex:0 0 auto}.legrand-switch:after{content:"";position:absolute;width:15px;height:15px;border-radius:50%;background:#fff;top:3px;left:3px;box-shadow:0 1px 3px rgba(15,23,42,.25);transition:.16s}.legrand-toggle input:checked+.legrand-switch{background:#0ea5e9}.legrand-toggle input:checked+.legrand-switch:after{transform:translateX(17px)}
+.special-formula{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:7px 10px;border-left:1px solid #bae6fd}.special-formula>span{text-transform:uppercase;letter-spacing:.06em;font-size:9px;font-weight:900;color:#0284c7}.special-formula code{font-size:11px;color:#075985;background:#e0f2fe;border-radius:6px;padding:5px 7px}
+.special-active-note{margin:12px 0;padding:11px 13px;border:1px solid #bae6fd;background:#f0f9ff;color:#075985;border-radius:10px;font-size:12px;line-height:1.45}
+@media(max-width:760px){.quick-mode-selector{grid-template-columns:1fr}.special-formula{border-left:0;border-top:1px solid #bae6fd;width:100%;padding-left:0}}
+</style>
 {% endblock %}
 
 {% block scripts %}
 <script>
 (function(){
+  const modeInputs=[...document.querySelectorAll('input[name="quick_mode"]')];
+  const specialOptions=document.getElementById('special-mode-options');
+  const description=document.getElementById('quick-mode-description');
+  const textarea=document.getElementById('quick-codes');
+  const submit=document.getElementById('quick-submit-button');
+
+  function updateQuickMode(){
+    const mode=modeInputs.find(input=>input.checked)?.value||'default';
+    const special=mode==='special';
+    if(specialOptions)specialOptions.hidden=!special;
+    if(description)description.textContent=special
+      ?'Paste EAN/SKU in column 1 and supplier Special Price in column 2. Prices below the Special Price are highlighted in blue.'
+      :'Paste EAN/SKU in column 1 and optional Target Price in column 2 directly from Excel. The pasted order is preserved.';
+    if(textarea)textarea.placeholder=special
+      ?'3606481482679\t10\n3606480790065\t5\nA9R35240\t12.50'
+      :'3606481482679\t10\n3606480790065\t5\nA9R35240\t12.50';
+    if(submit)submit.textContent=special?'Apply special prices':'Apply code filter';
+  }
+  modeInputs.forEach(input=>input.addEventListener('change',updateQuickMode));
+  updateQuickMode();
+
   const table=document.getElementById('comparison-table');
   if(!table)return;
   const tbody=table.tBodies[0];
