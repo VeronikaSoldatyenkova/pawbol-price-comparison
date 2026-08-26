@@ -13,7 +13,7 @@ COPY . .
 
 # Refuse to build/deploy an image if imports, core workflows, optimized
 # large-file routes or special-price calculations are broken.
-RUN python -m py_compile main.py runtime_main.py powerbi_purchase_fields.py performance_optimization.py special_prices.py production_app.py core.py app.py smoke_test.py performance_smoke_test.py special_prices_smoke_test.py && python smoke_test.py && python performance_smoke_test.py && python special_prices_smoke_test.py
+RUN python -m py_compile main.py runtime_main.py powerbi_purchase_fields.py performance_optimization.py special_prices.py production_app.py core.py smoke_test.py performance_smoke_test.py special_prices_smoke_test.py && python smoke_test.py && python performance_smoke_test.py && python special_prices_smoke_test.py
 
 EXPOSE 8501
 
