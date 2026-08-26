@@ -6,8 +6,10 @@ apply()
 
 from runtime_main import app  # noqa: E402,F401
 from performance_optimization import install  # noqa: E402
+from special_prices import install as install_special_prices  # noqa: E402
 
 install(app)
+install_special_prices(app)
 
 
 def _route(path, method):
